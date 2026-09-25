@@ -312,7 +312,7 @@ namespace AssetStudio
                 type.m_OldTypeHash = reader.ReadBytes(16);
             }
 
-            if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
+            if (header.m_Version >= SerializedFileFormatVersion.TypeTreeBlobs)
             {
                 type.m_TypeTreeHash = reader.ReadBytes(16);
             }
@@ -322,11 +322,23 @@ namespace AssetStudio
                 Logger.Verbose($"File has type tree enabled !!");
                 type.m_Type = new TypeTree();
                 type.m_Type.m_Nodes = new List<TypeTreeNode>();
-                if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
+                var extractedTypeTree = false;
+                if (header.m_Version >= SerializedFileFormatVersion.TypeTreeBlobs)
                 {
-                    reader.ReadUInt32(); // blob size
-                    // the referenced sub trees are only known after the reference types, see ResolveSharedTypeTrees
-                    pendingTypeTrees.Add((type.m_Type, ReadSharedTypeTreeBlob()));
+                    var blobSize = reader.ReadUInt32();
+                    if (blobSize == 0)
+                    {
+                        extractedTypeTree = true; // stored in a separate .typetreedata file
+                    }
+                    else if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
+                    {
+                        // the referenced sub trees are only known after the reference types, see ResolveSharedTypeTrees
+                        pendingTypeTrees.Add((type.m_Type, ReadTypeTreeBlob()));
+                    }
+                    else
+                    {
+                        AppendSharedTypeTree(type.m_Type.m_Nodes, ReadTypeTreeBlob(), 0, false, null, 0);
+                    }
                 }
                 else if (header.m_Version >= SerializedFileFormatVersion.Unknown_12 || header.m_Version == SerializedFileFormatVersion.Unknown_10)
                 {
@@ -348,6 +360,10 @@ namespace AssetStudio
                     {
                         type.m_TypeDependencies = reader.ReadInt32Array();
                     }
+                }
+                if (extractedTypeTree)
+                {
+                    type.m_Type = null; // read like a file without type trees
                 }
             }
 
@@ -442,7 +458,7 @@ namespace AssetStudio
             }
         }
 
-        #region Shared type trees (SerializedFileFormatVersion.SharedTypeTrees)
+        #region Type tree blobs (SerializedFileFormatVersion.TypeTreeBlobs and SharedTypeTrees)
 
         private sealed class SharedTypeTreeBlob
         {
@@ -454,7 +470,7 @@ namespace AssetStudio
         private const byte SubTreeReferenceFlag = 0x20;
         private readonly List<(TypeTree tree, SharedTypeTreeBlob blob)> pendingTypeTrees = new List<(TypeTree, SharedTypeTreeBlob)>();
 
-        private SharedTypeTreeBlob ReadSharedTypeTreeBlob()
+        private SharedTypeTreeBlob ReadTypeTreeBlob()
         {
             var magic = reader.ReadBytes(4);
             if (magic.Length != 4 || magic[0] != 'm' || magic[1] != 'h' || magic[2] != 't' || magic[3] != 't')
@@ -469,7 +485,7 @@ namespace AssetStudio
                     reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadUInt64());
             }
             blob.strings = reader.ReadBytes(stringBufferSize);
-            blob.references = new string[reader.ReadInt32()];
+            blob.references = new string[header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees ? reader.ReadInt32() : 0];
             for (int i = 0; i < blob.references.Length; i++)
             {
                 blob.references[i] = Convert.ToHexString(reader.ReadBytes(16));
@@ -486,7 +502,7 @@ namespace AssetStudio
             {
                 var hash = Convert.ToHexString(reader.ReadBytes(16));
                 reader.ReadUInt32(); // blob size
-                subTrees[hash] = ReadSharedTypeTreeBlob();
+                subTrees[hash] = ReadTypeTreeBlob();
             }
             foreach (var (tree, blob) in pendingTypeTrees)
             {
@@ -518,7 +534,7 @@ namespace AssetStudio
                 if ((raw.flags & SubTreeReferenceFlag) != 0)
                 {
                     // the node stands for the root of the sub tree, its children follow one level below it
-                    if (raw.reference < (ulong)blob.references.Length && subTrees.TryGetValue(blob.references[raw.reference], out var subTree))
+                    if (subTrees != null && raw.reference < (ulong)blob.references.Length && subTrees.TryGetValue(blob.references[raw.reference], out var subTree))
                     {
                         AppendSharedTypeTree(nodes, subTree, level, true, subTrees, depth + 1);
                     }

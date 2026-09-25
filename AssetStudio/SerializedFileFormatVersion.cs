@@ -84,16 +84,20 @@ namespace AssetStudio
         /// </summary>
         LargeFilesSupport = 22,
 
-        Unknown_23 = 23,
+        /// <summary>
+        /// 6000.5: each type stores an extra 16-byte type tree hash and its type tree as a size-prefixed "mhtt" blob.
+        /// A size of 0 means the type trees were extracted to a separate file (Addressables "Extract Typetrees").
+        /// </summary>
+        TypeTreeBlobs = 23,
 
         Unknown_24 = 24,
 
         Unknown_25 = 25,
 
         /// <summary>
-        /// 6000.7 (seen in 6000.7.0b2): type trees are split into shareable sub trees. Each type stores an extra
-        /// 16-byte hash and a size-prefixed "mhtt" blob whose nodes with type flag 0x20 reference a sub tree
-        /// by hash; the sub trees follow the reference types in one table.
+        /// 6000.7: type trees are split into shareable sub trees. The "mhtt" blob of a type ends with the hashes of
+        /// the sub trees it uses; nodes with type flag 0x20 stand for one of them. The sub trees follow the
+        /// reference types in one table.
         /// </summary>
         SharedTypeTrees = 26
     }
