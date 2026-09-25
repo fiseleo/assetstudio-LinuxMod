@@ -53,6 +53,11 @@ namespace SpirV
 			{
 				if (IsDebugInstruction(instruction))
 				{
+					// OpString has a result, referenced by OpSource / OpLine
+					if (instruction.HasResult)
+					{
+						objects[instruction.ResultId] = instruction;
+					}
 					debugInstructions.Add(instruction);
 					continue;
 				}

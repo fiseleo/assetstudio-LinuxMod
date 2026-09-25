@@ -1046,6 +1046,12 @@ namespace AssetStudio
                     case ShaderGpuProgramType.DX9PixelSM20:
                     case ShaderGpuProgramType.DX9PixelSM30:
                         {
+                            if (!OperatingSystem.IsWindows())
+                            {
+                                sb.Append($"// hash: {ComputeHash64(m_ProgramCode):x8}\n");
+                                AppendVulkan(sb, m_ProgramCode, Vkd3dShader.SourceType.D3DBytecode);
+                                break;
+                            }
                             try
                             {
                                 var programCodeSpan = m_ProgramCode.AsSpan();
@@ -1089,6 +1095,11 @@ namespace AssetStudio
                             var buffSpan = m_ProgramCode.AsSpan(start);
 
                             sb.Append($"// hash: {ComputeHash64(buffSpan):x8}\n");
+                            if (!OperatingSystem.IsWindows())
+                            {
+                                AppendVulkan(sb, buffSpan, Vkd3dShader.SourceType.DxbcTpf);
+                                break;
+                            }
                             try
                             {
                                 HLSLDecompiler.DecompileShader(buffSpan.ToArray(), buffSpan.Length, out var hlslText);
@@ -1155,6 +1166,49 @@ namespace AssetStudio
             sb.Append('"');
             return sb.ToString();
         }
+        /// <summary>
+        /// Direct3D programs off Windows (no d3dcompiler / HLSLDecompiler): translate to Vulkan SPIR-V with
+        /// vkd3d-shader and decompile that to Vulkan GLSL with SPIRV-Cross, falling back to the SPIR-V
+        /// disassembly and then to vkd3d's Direct3D assembly listing.
+        /// </summary>
+        private static void AppendVulkan(StringBuilder sb, ReadOnlySpan<byte> byteCode, Vkd3dShader.SourceType sourceType)
+        {
+            if (!Vkd3dShader.IsAvailable)
+            {
+                sb.Append("// DirectX shader: vkd3d-shader library (x64/libvkd3d-shader.so) not found, unable to convert to Vulkan SPIR-V\n");
+                return;
+            }
+            try
+            {
+                if (SpirvCross.IsAvailable)
+                {
+                    var glsl = Vkd3dShader.ToGlsl(byteCode, sourceType);
+                    sb.Append("// DirectX -> Vulkan SPIR-V (vkd3d-shader) -> GLSL (SPIRV-Cross)\n");
+                    sb.Append(glsl);
+                }
+                else
+                {
+                    var text = Vkd3dShader.ToSpirvText(byteCode, sourceType);
+                    sb.Append("// DirectX -> Vulkan SPIR-V (vkd3d-shader)\n");
+                    sb.Append(text);
+                }
+                return;
+            }
+            catch (Exception e)
+            {
+                Logger.Verbose($"Vulkan conversion error {e.Message}");
+                sb.Append($"// Vulkan conversion error {e.Message}\n");
+            }
+            try
+            {
+                sb.Append(Vkd3dShader.ToD3DAsm(byteCode, sourceType));
+            }
+            catch (Exception e)
+            {
+                sb.Append($"// disassembly error {e.Message}\n");
+            }
+        }
+
         public ulong ComputeHash64(Span<byte> data)
         {
             ulong hval = 0;
