@@ -1,0 +1,277 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:AssetStudio.Avalonia"
+        x:Class="AssetStudio.Avalonia.Views.MainWindow"
+        Title="AssetStudio"
+        Icon="avares://AssetStudio.Avalonia/as.ico"
+        Width="1280" Height="800"
+        DragDrop.AllowDrop="True">
+  <Window.Styles>
+    <Style Selector="TreeViewItem" x:DataType="local:SceneNode">
+      <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+    </Style>
+    <Style Selector="TextBox.mono">
+      <Setter Property="FontFamily" Value="DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, monospace" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TabControl > TabItem">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Padding" Value="10,2" />
+    </Style>
+    <Style Selector="Border.modelNode">
+      <Setter Property="Background" Value="#3087CEEB" />
+    </Style>
+  </Window.Styles>
+
+  <DockPanel>
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="_File">
+        <MenuItem Header="Load file..." InputGesture="Ctrl+O" Click="LoadFile_Click" />
+        <MenuItem Header="Load folder..." InputGesture="Ctrl+Shift+O" Click="LoadFolder_Click" />
+        <Separator />
+        <MenuItem Header="Extract file..." Click="ExtractFile_Click" />
+        <MenuItem Header="Extract folder..." Click="ExtractFolder_Click" />
+        <Separator />
+        <MenuItem Header="Reset" Click="Reset_Click" />
+        <MenuItem Header="Abort" Click="Abort_Click" />
+        <Separator />
+        <MenuItem Header="Exit" Click="Exit_Click" />
+      </MenuItem>
+      <MenuItem Header="_Options">
+        <MenuItem x:Name="displayAll" Header="Display all assets" ToggleType="CheckBox" Click="DisplayAll_Click"
+                  ToolTip.Tip="Also list assets that cannot be converted (takes effect on next load)" />
+        <MenuItem x:Name="enablePreview" Header="Enable preview" ToggleType="CheckBox" Click="EnablePreview_Click" />
+        <MenuItem x:Name="enableModelPreview" Header="Enable model preview (GameObject / Animator)" ToggleType="CheckBox" Click="EnableModelPreview_Click" />
+        <MenuItem x:Name="modelsOnly" Header="Filter models only" ToggleType="CheckBox" Click="ModelsOnly_Click" />
+        <MenuItem x:Name="displayInfo" Header="Display asset information" ToggleType="CheckBox" Click="DisplayInfo_Click" />
+        <MenuItem x:Name="enableResolveDependencies" Header="Enable resolve dependencies" ToggleType="CheckBox" Click="ResolveDependencies_Click" />
+        <MenuItem x:Name="allowDuplicates" Header="Allow duplicates" ToggleType="CheckBox" Click="AllowDuplicates_Click" />
+        <MenuItem x:Name="skipContainer" Header="Skip container recovery" ToggleType="CheckBox" Click="SkipContainer_Click" />
+        <Separator />
+        <MenuItem Header="Specify UnityCN key..." Click="UnityCNKeys_Click" />
+        <MenuItem Header="Load assembly folder (MonoBehaviour)..." Click="LoadAssemblyFolder_Click" />
+        <Separator />
+        <MenuItem Header="Export options..." Click="ExportOptions_Click" />
+      </MenuItem>
+      <MenuItem Header="_Model">
+        <MenuItem Header="Export all objects (split)" Click="ExportAllObjectsSplit_Click" />
+        <MenuItem Header="Export selected objects (split)" Click="ExportSelectedObjects_Click" />
+        <MenuItem Header="Export selected objects (split) + selected AnimationClips" Click="ExportSelectedObjectsWithClips_Click" />
+        <Separator />
+        <MenuItem Header="Export selected objects (merge)" Click="ExportMergeObjects_Click" />
+        <MenuItem Header="Export selected objects (merge) + selected AnimationClips" Click="ExportMergeObjectsWithClips_Click" />
+        <Separator />
+        <MenuItem Header="Export selected nodes (split)" Click="ExportNodes_Click" />
+        <MenuItem Header="Export selected nodes (split) + selected AnimationClips" Click="ExportNodesWithClips_Click" />
+      </MenuItem>
+      <MenuItem Header="_Export">
+        <MenuItem Header="All assets" Click="ExportAllConvert_Click" />
+        <MenuItem Header="Selected assets" Click="ExportSelectedConvert_Click" />
+        <MenuItem Header="Filtered assets" Click="ExportFilteredConvert_Click" />
+        <Separator />
+        <MenuItem Header="Animator + selected AnimationClips" Click="ExportAnimatorWithClips_Click" />
+        <Separator />
+        <MenuItem Header="Raw">
+          <MenuItem Header="All assets" Tag="All" Click="ExportRaw_Click" />
+          <MenuItem Header="Selected assets" Tag="Selected" Click="ExportRaw_Click" />
+          <MenuItem Header="Filtered assets" Tag="Filtered" Click="ExportRaw_Click" />
+        </MenuItem>
+        <MenuItem Header="Dump">
+          <MenuItem Header="All assets" Tag="All" Click="ExportDump_Click" />
+          <MenuItem Header="Selected assets" Tag="Selected" Click="ExportDump_Click" />
+          <MenuItem Header="Filtered assets" Tag="Filtered" Click="ExportDump_Click" />
+        </MenuItem>
+        <MenuItem Header="JSON">
+          <MenuItem Header="All assets" Tag="All" Click="ExportJson_Click" />
+          <MenuItem Header="Selected assets" Tag="Selected" Click="ExportJson_Click" />
+          <MenuItem Header="Filtered assets" Tag="Filtered" Click="ExportJson_Click" />
+        </MenuItem>
+        <Separator />
+        <MenuItem Header="Asset list to XML">
+          <MenuItem Header="All assets" Tag="All" Click="ExportList_Click" />
+          <MenuItem Header="Selected assets" Tag="Selected" Click="ExportList_Click" />
+          <MenuItem Header="Filtered assets" Tag="Filtered" Click="ExportList_Click" />
+        </MenuItem>
+        <Separator />
+        <MenuItem Header="Scene hierarchy (JSON)..." Click="ExportSceneHierarchy_Click" />
+      </MenuItem>
+      <MenuItem x:Name="filterTypeMenu" Header="Filter _Type">
+        <MenuItem x:Name="filterAll" Header="All" ToggleType="CheckBox" IsChecked="True" Click="FilterType_Click" />
+      </MenuItem>
+      <MenuItem x:Name="miscMenu" Header="_Misc.">
+        <MenuItem Header="Select CABMap..." Click="SelectCABMap_Click" />
+        <MenuItem Header="Build CABMap..." Click="BuildMap_Click" />
+        <MenuItem Header="Build CABMap + AssetMap..." Click="BuildBoth_Click" />
+        <MenuItem Header="Delete CABMap..." Click="ClearMap_Click" />
+        <MenuItem Header="Load CABMap file..." Click="LoadCABMap_Click" />
+        <Separator />
+        <MenuItem Header="Build AssetMap..." Click="BuildAssetMap_Click" />
+        <MenuItem x:Name="assetMapTypeMenu" Header="AssetMap type" />
+        <Separator />
+        <MenuItem Header="Load AI (asset index JSON)..." Click="LoadAI_Click" />
+      </MenuItem>
+      <MenuItem Header="_Debug">
+        <MenuItem x:Name="showErrorMessage" Header="Show error message box" ToggleType="CheckBox" IsChecked="True" Click="ShowErrorMessage_Click" />
+        <MenuItem x:Name="enableConsole" Header="Write log to terminal (stdout)" ToggleType="CheckBox" Click="EnableConsole_Click" />
+        <MenuItem x:Name="enableFileLogging" Header="Enable file logging" ToggleType="CheckBox" Click="EnableFileLogging_Click" />
+        <MenuItem x:Name="loggedEventsMenu" Header="Logged events" />
+        <MenuItem Header="Clear log" Click="ClearLog_Click" />
+        <Separator />
+        <MenuItem Header="Export class structures..." Click="ExportClassStructures_Click" />
+      </MenuItem>
+    </Menu>
+
+    <!-- Toolbar: game / version selection (was hidden inside the Options menu on Windows) -->
+    <Border DockPanel.Dock="Top" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" Padding="6,4">
+      <WrapPanel Orientation="Horizontal">
+        <TextBlock Text="Game:" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <ComboBox x:Name="gameComboBox" MinWidth="200" MaxDropDownHeight="500" SelectionChanged="Game_SelectionChanged" Margin="0,0,12,0" />
+        <TextBlock Text="Unity version:" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <TextBox x:Name="unityVersionTextBox" Width="140" Watermark="auto detect" Margin="0,0,12,0"
+                 ToolTip.Tip="Specify the Unity version, e.g. 2020.3.48f1. Leave empty to auto detect." />
+        <TextBlock x:Name="aiVersionLabel" Text="AI version:" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <ComboBox x:Name="aiVersionComboBox" MinWidth="160" SelectionChanged="AIVersion_SelectionChanged" DropDownOpened="AIVersion_DropDownOpened" Margin="0,0,12,0"
+                  ToolTip.Tip="Asset index version (GI based games), used to recover container paths" />
+        <TextBlock x:Name="cabMapLabel" VerticalAlignment="Center" Foreground="Gray" />
+      </WrapPanel>
+    </Border>
+
+    <!-- Status bar -->
+    <Border DockPanel.Dock="Bottom" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" Padding="6,2">
+      <Grid ColumnDefinitions="*,Auto,Auto">
+        <TextBlock x:Name="statusLabel" Grid.Column="0" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        <TextBlock x:Name="assetCountLabel" Grid.Column="1" VerticalAlignment="Center" Margin="12,0" />
+        <ProgressBar x:Name="progressBar" Grid.Column="2" Width="220" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <Grid ColumnDefinitions="9*,4,11*">
+      <TabControl x:Name="leftTabs" Grid.Column="0" SelectionChanged="LeftTabs_SelectionChanged" Padding="0">
+        <TabItem Header="Scene Hierarchy">
+          <DockPanel>
+            <TextBox x:Name="treeSearch" DockPanel.Dock="Top" Margin="4" Watermark="Search (regex) + Enter.  Shift=all, Ctrl=check, Alt=root"
+                     KeyDown="TreeSearch_KeyDown" TextChanged="TreeSearch_TextChanged" />
+            <TreeView x:Name="sceneTreeView" SelectionMode="Single">
+              <TreeView.ItemTemplate>
+                <TreeDataTemplate DataType="local:SceneNode" ItemsSource="{Binding Nodes}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" MinWidth="0" Padding="0" VerticalAlignment="Center" />
+                    <Border Classes.modelNode="{Binding HasModel}" CornerRadius="2" Padding="2,0">
+                      <TextBlock Text="{Binding Text}" VerticalAlignment="Center" />
+                    </Border>
+                  </StackPanel>
+                </TreeDataTemplate>
+              </TreeView.ItemTemplate>
+            </TreeView>
+          </DockPanel>
+        </TabItem>
+        <TabItem Header="Asset List">
+          <DockPanel>
+            <TextBox x:Name="listSearch" DockPanel.Dock="Top" Margin="4" Watermark="Filter by name / container / type / PathID (regex), press Enter"
+                     KeyDown="ListSearch_KeyDown" />
+            <DataGrid x:Name="assetListView" x:CompileBindings="False"
+                      IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True" CanUserResizeColumns="True"
+                      GridLinesVisibility="None" HeadersVisibility="Column"
+                      SelectionChanged="AssetList_SelectionChanged" Sorting="AssetList_Sorting">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Text}" Width="2*" MinWidth="110" SortMemberPath="Text" />
+                <DataGridTextColumn Header="Container" Binding="{Binding Container}" Width="2*" MinWidth="80" SortMemberPath="Container" />
+                <DataGridTextColumn Header="Type" Binding="{Binding TypeString}" Width="Auto" MinWidth="90" SortMemberPath="TypeString" />
+                <DataGridTextColumn Header="PathID" Binding="{Binding PathID}" Width="Auto" MaxWidth="150" SortMemberPath="PathID" />
+                <DataGridTextColumn Header="Size" Binding="{Binding FullSize}" Width="Auto" SortMemberPath="FullSize" />
+              </DataGrid.Columns>
+              <DataGrid.ContextMenu>
+                <ContextMenu x:Name="assetContextMenu" Opening="AssetContextMenu_Opening">
+                  <MenuItem x:Name="copyMenuItem" Header="Copy name" Click="CopyName_Click" />
+                  <MenuItem x:Name="copyContainerMenuItem" Header="Copy container" Click="CopyContainer_Click" />
+                  <MenuItem Header="Export selected assets" Click="ExportSelectedConvert_Click" />
+                  <MenuItem x:Name="exportAnimatorContextItem" Header="Export Animator + selected AnimationClips" Click="ExportAnimatorWithClips_Click" />
+                  <MenuItem x:Name="goToSceneHierarchyItem" Header="Go to scene hierarchy" Click="GoToSceneHierarchy_Click" />
+                  <MenuItem x:Name="showOriginalFileItem" Header="Show original file" Click="ShowOriginalFile_Click" />
+                </ContextMenu>
+              </DataGrid.ContextMenu>
+            </DataGrid>
+          </DockPanel>
+        </TabItem>
+        <TabItem Header="Asset Classes">
+          <ListBox x:Name="classesListView" SelectionChanged="Classes_SelectionChanged">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="local:TypeTreeItem">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="{Binding Version}" Foreground="Gray" />
+                  <TextBlock Text="{Binding TypeID}" MinWidth="50" />
+                  <TextBlock Text="{Binding Text}" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </TabItem>
+      </TabControl>
+
+      <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+
+      <Grid Grid.Column="2" RowDefinitions="*,4,140">
+        <TabControl x:Name="rightTabs" Grid.Row="0" SelectionChanged="RightTabs_SelectionChanged" Padding="0">
+          <TabItem Header="Preview">
+            <Grid x:Name="previewGrid" Focusable="True" Background="Transparent" KeyDown="Preview_KeyDown">
+              <!-- checkerboard background for textures -->
+              <Border x:Name="imagePreviewHost" IsVisible="False" ClipToBounds="True">
+                <Border.Background>
+                  <VisualBrush TileMode="Tile" SourceRect="0,0,16,16" DestinationRect="0,0,16,16">
+                    <VisualBrush.Visual>
+                      <Canvas Width="16" Height="16" Background="#FFBFBFBF">
+                        <Rectangle Width="8" Height="8" Fill="#FF8F8F8F" />
+                        <Rectangle Width="8" Height="8" Canvas.Left="8" Canvas.Top="8" Fill="#FF8F8F8F" />
+                      </Canvas>
+                    </VisualBrush.Visual>
+                  </VisualBrush>
+                </Border.Background>
+                <Image x:Name="imagePreview" Stretch="Uniform" StretchDirection="DownOnly" RenderOptions.BitmapInterpolationMode="MediumQuality" />
+              </Border>
+              <Border x:Name="meshPreviewHost" IsVisible="False" Background="#FF2A3238" ClipToBounds="True" Focusable="True"
+                      PointerPressed="Mesh_PointerPressed" PointerMoved="Mesh_PointerMoved" PointerReleased="Mesh_PointerReleased"
+                      PointerWheelChanged="Mesh_PointerWheelChanged" SizeChanged="Mesh_SizeChanged">
+                <Image x:Name="meshImage" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top" />
+              </Border>
+              <TextBox x:Name="textPreviewBox" Classes="mono" IsVisible="False" IsReadOnly="True" AcceptsReturn="True"
+                       TextWrapping="NoWrap" BorderThickness="0" />
+              <TextBox x:Name="classTextBox" Classes="mono" IsVisible="False" IsReadOnly="True" AcceptsReturn="True"
+                       TextWrapping="NoWrap" BorderThickness="0" />
+              <StackPanel x:Name="audioPanel" IsVisible="False" Margin="16" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock x:Name="audioInfoLabel" FontSize="14" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button x:Name="audioPlayButton" Content="Play" Click="AudioPlay_Click" />
+                  <Button x:Name="audioStopButton" Content="Stop" Click="AudioStop_Click" />
+                </StackPanel>
+                <TextBlock x:Name="audioHintLabel" Foreground="Gray" TextWrapping="Wrap" MaxWidth="420" />
+              </StackPanel>
+              <Border x:Name="assetInfoBorder" IsVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6"
+                      Background="#B0000000" CornerRadius="3" Padding="6,4" IsHitTestVisible="False">
+                <TextBlock x:Name="assetInfoLabel" Foreground="White" />
+              </Border>
+            </Grid>
+          </TabItem>
+          <TabItem Header="Dump">
+            <TextBox x:Name="dumpTextBox" Classes="mono" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" BorderThickness="0" />
+          </TabItem>
+        </TabControl>
+        <GridSplitter Grid.Row="1" ResizeDirection="Rows" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+        <ListBox x:Name="logList" Grid.Row="2" SelectionMode="Multiple" KeyDown="LogList_KeyDown"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto">
+          <ListBox.Styles>
+            <Style Selector="ListBoxItem">
+              <Setter Property="Padding" Value="4,0" />
+              <Setter Property="MinHeight" Value="0" />
+            </Style>
+          </ListBox.Styles>
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <TextBlock Text="{Binding}" FontFamily="DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, monospace" FontSize="12" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Grid>
+  </DockPanel>
+</Window>

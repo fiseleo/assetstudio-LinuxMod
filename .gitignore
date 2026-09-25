@@ -340,3 +340,12 @@ ASALocalRun/
 healthchecksdb
 /AssetStudioCLI/Properties/launchSettings.json
 /AssetStudioGUI/Properties/launchSettings.json
+
+# Linux release output (build-linux.sh)
+dist/
+
+# prebuilt Linux native libraries (built with build-fbxnative-linux.sh)
+!AssetStudio.Avalonia/Libraries/x64/
+
+# build-fbxnative-linux.sh work directory
+/build/

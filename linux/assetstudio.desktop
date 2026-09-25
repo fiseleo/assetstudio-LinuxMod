@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AssetStudio
+Comment=Unity asset extraction tool
+Exec=@INSTALL_DIR@/AssetStudio.Avalonia %F
+Icon=@INSTALL_DIR@/as.ico
+Terminal=false
+Categories=Development;Graphics;Utility;

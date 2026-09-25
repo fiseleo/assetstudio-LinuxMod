@@ -1,0 +1,126 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AssetStudio.Avalonia.Views.ExportOptionsWindow"
+        Title="Export options"
+        Width="760" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+  <Window.Styles>
+    <Style Selector="HeaderedContentControl">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,8,0,0">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{TemplateBinding Header}" FontWeight="SemiBold" Margin="0,0,0,4" />
+              <ContentPresenter Content="{TemplateBinding Content}" />
+            </StackPanel>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+  </Window.Styles>
+  <DockPanel Margin="12">
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+      <Button Content="Reset all settings" Click="Reset_Click" />
+      <Button Content="OK" IsDefault="True" MinWidth="80" Click="OK_Click" />
+      <Button Content="Cancel" IsCancel="True" MinWidth="80" Click="Cancel_Click" />
+    </StackPanel>
+    <Grid ColumnDefinitions="*,12,*">
+      <StackPanel Grid.Column="0">
+        <HeaderedContentControl Header="Export">
+          <StackPanel Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="Group exported assets by" VerticalAlignment="Center" />
+              <ComboBox x:Name="assetGroupOptions" MinWidth="160">
+                <ComboBoxItem>type name</ComboBoxItem>
+                <ComboBoxItem>container path</ComboBoxItem>
+                <ComboBoxItem>source file name</ComboBoxItem>
+                <ComboBoxItem>do not group</ComboBoxItem>
+              </ComboBox>
+            </StackPanel>
+            <CheckBox x:Name="restoreExtensionName" Content="Restore TextAsset extension name from container path" />
+            <CheckBox x:Name="convertTexture" Content="Convert Texture2D" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,0,0">
+              <RadioButton x:Name="formatPng" GroupName="fmt" Content="Png" />
+              <RadioButton x:Name="formatBmp" GroupName="fmt" Content="Bmp" />
+              <RadioButton x:Name="formatJpeg" GroupName="fmt" Content="Jpeg" />
+              <RadioButton x:Name="formatTga" GroupName="fmt" Content="Tga" />
+            </StackPanel>
+            <CheckBox x:Name="convertAudio" Content="Convert AudioClip (WAV with FMOD, otherwise OGG/WAV)" />
+            <CheckBox x:Name="openAfterExport" Content="Open folder after export" />
+          </StackPanel>
+        </HeaderedContentControl>
+        <HeaderedContentControl Header="Types">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <ComboBox x:Name="typesComboBox" MinWidth="200" MaxDropDownHeight="400" SelectionChanged="Types_SelectionChanged" />
+            <CheckBox x:Name="canParseCheckBox" Content="Parse" IsCheckedChanged="CanParse_Changed" />
+            <CheckBox x:Name="canExportCheckBox" Content="Export" IsCheckedChanged="CanExport_Changed" />
+          </StackPanel>
+        </HeaderedContentControl>
+        <HeaderedContentControl Header="Misc">
+          <StackPanel Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <CheckBox x:Name="encrypted" Content="MiHoYoBinData encrypted, key (hex):" />
+              <TextBox x:Name="keyTextBox" Width="60" />
+            </StackPanel>
+            <CheckBox x:Name="minimalAssetMap" Content="Minimal AssetMap" />
+          </StackPanel>
+        </HeaderedContentControl>
+      </StackPanel>
+      <StackPanel Grid.Column="2">
+        <HeaderedContentControl Header="FBX">
+          <StackPanel Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <CheckBox x:Name="eulerFilter" Content="Euler filter, precision" />
+              <NumericUpDown x:Name="filterPrecision" Width="120" Minimum="0" Maximum="10" Increment="0.01" FormatString="0.00" />
+            </StackPanel>
+            <CheckBox x:Name="exportAllNodes" Content="Export all nodes" />
+            <CheckBox x:Name="exportSkins" Content="Export skin" />
+            <CheckBox x:Name="exportMaterials" Content="Export materials" />
+            <CheckBox x:Name="exportAnimations" Content="Export animations" />
+            <CheckBox x:Name="collectAnimations" Content="Collect animations" />
+            <CheckBox x:Name="exportBlendShape" Content="Export blendshape" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <CheckBox x:Name="castToBone" Content="All nodes cast to bone, size" />
+              <NumericUpDown x:Name="boneSize" Width="120" Minimum="0" Maximum="100" Increment="1" FormatString="0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Scale factor" VerticalAlignment="Center" />
+              <NumericUpDown x:Name="scaleFactor" Width="120" Minimum="0" Maximum="100" Increment="0.1" FormatString="0.00" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="FBX format" VerticalAlignment="Center" />
+              <ComboBox x:Name="fbxFormat">
+                <ComboBoxItem>Binary</ComboBoxItem>
+                <ComboBoxItem>Ascii</ComboBoxItem>
+              </ComboBox>
+              <TextBlock Text="version" VerticalAlignment="Center" />
+              <ComboBox x:Name="fbxVersion">
+                <ComboBoxItem>6.1</ComboBoxItem>
+                <ComboBoxItem>7.1</ComboBoxItem>
+                <ComboBoxItem>7.2</ComboBoxItem>
+                <ComboBoxItem>7.3</ComboBoxItem>
+                <ComboBoxItem>7.4</ComboBoxItem>
+                <ComboBoxItem>7.5</ComboBoxItem>
+              </ComboBox>
+            </StackPanel>
+          </StackPanel>
+        </HeaderedContentControl>
+        <HeaderedContentControl Header="UVs">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <ComboBox x:Name="uvsComboBox" MinWidth="80" SelectionChanged="Uvs_SelectionChanged" />
+            <CheckBox x:Name="uvEnabledCheckBox" Content="Enabled" IsCheckedChanged="UvEnabled_Changed" />
+            <ComboBox x:Name="uvTypesComboBox" MinWidth="130" SelectionChanged="UvTypes_SelectionChanged" />
+          </StackPanel>
+        </HeaderedContentControl>
+        <HeaderedContentControl Header="Texture type by name">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <AutoCompleteBox x:Name="texNameBox" MinWidth="140" MinimumPrefixLength="0" FilterMode="ContainsOrdinal" SelectionChanged="TexName_SelectionChanged" />
+            <ComboBox x:Name="texTypeComboBox" MinWidth="130" SelectionChanged="TexType_SelectionChanged" />
+            <Button Content="+" Click="AddTex_Click" ToolTip.Tip="Add texture name" />
+            <Button Content="-" Click="RemoveTex_Click" ToolTip.Tip="Remove texture name" />
+          </StackPanel>
+        </HeaderedContentControl>
+      </StackPanel>
+    </Grid>
+  </DockPanel>
+</Window>

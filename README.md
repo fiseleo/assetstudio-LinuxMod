@@ -59,6 +59,17 @@ Note: Requires Internet connection to fetch asset_index jsons.
 
 ---
 
+### Linux
+
+A cross-platform GUI (`AssetStudio.Avalonia`) and the CLI run on Linux. See [LINUX.md](LINUX.md).
+
+```bash
+dotnet run --project AssetStudio.Avalonia   # run the GUI
+./build-linux.sh                            # self-contained release in dist/
+```
+
+---
+
 How to use:
 
 Check the tutorial [here](https://gist.github.com/Modder4869/0f5371f8879607eb95b8e63badca227e) (Thanks to Modder4869 for the tutorial)

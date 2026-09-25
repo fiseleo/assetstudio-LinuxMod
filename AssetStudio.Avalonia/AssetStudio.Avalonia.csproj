@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>AssetStudio.Avalonia</AssemblyName>
+    <RootNamespace>AssetStudio.Avalonia</RootNamespace>
+    <ApplicationIcon>as.ico</ApplicationIcon>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <Version>1.36.00</Version>
+    <AssemblyVersion>1.36.00</AssemblyVersion>
+    <FileVersion>1.36.00</FileVersion>
+    <Copyright>Copyright © Razmoth 2022; Copyright © Perfare 2018-2022</Copyright>
+    <DebugType>embedded</DebugType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="as.ico" />
+    <!-- SPIR-V for the Vulkan model preview, rebuilt from the GLSL sources with Shaders/compile.sh -->
+    <EmbeddedResource Include="Shaders\*.spv" LogicalName="Shaders.%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- prebuilt native libraries (FBX exporter), loaded from x64/ next to the executable -->
+    <ContentWithTargetPath Include="Libraries\x64\*.so">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <TargetPath>x64\%(Filename)%(Extension)</TargetPath>
+    </ContentWithTargetPath>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.12" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Silk.NET.Vulkan" Version="2.23.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AssetStudio.Utility\AssetStudio.Utility.csproj" />
+    <ProjectReference Include="..\AssetStudio\AssetStudio.csproj" />
+  </ItemGroup>
+</Project>
