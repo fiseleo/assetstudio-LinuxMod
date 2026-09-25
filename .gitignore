@@ -344,9 +344,8 @@ healthchecksdb
 # Linux release output (build-linux.sh)
 dist/
 
-# prebuilt Linux native libraries (built with the build-*-linux.sh scripts)
+# prebuilt Linux native libraries (built with build-fbxnative-linux.sh)
 !AssetStudio.Avalonia/Libraries/x64/
-!AssetStudio.Avalonia/Libraries/arm64/
 
 # build-fbxnative-linux.sh work directory
 /build/

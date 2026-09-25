@@ -181,8 +181,7 @@ namespace AssetStudio.Avalonia.Views
             }
             if (!NativeLibraries.FbxAvailable)
             {
-                Logger.Info($"FBX exporter not found ({Path.Combine(NativeLibraries.NativeDirectory, NativeLibraries.FbxLibraryFileName)}); FBX model export is unavailable."
-                    + (OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture != Architecture.X64 ? " The Autodesk FBX SDK only exists for x86-64 Linux." : ""));
+                Logger.Info($"FBX exporter not found ({Path.Combine(NativeLibraries.NativeDirectory, NativeLibraries.FbxLibraryFileName)}); FBX model export is unavailable.");
             }
             StatusStripUpdate("Ready - drop Unity files here or use File > Load file / Load folder");
         }

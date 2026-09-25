@@ -21,24 +21,12 @@
     <!-- SPIR-V for the Vulkan model preview, rebuilt from the GLSL sources with Shaders/compile.sh -->
     <EmbeddedResource Include="Shaders\*.spv" LogicalName="Shaders.%(Filename)%(Extension)" />
   </ItemGroup>
-  <PropertyGroup>
-    <!-- architecture folder of the prebuilt native libraries: from the RuntimeIdentifier, else the build machine -->
-    <NativeArch>x64</NativeArch>
-    <NativeArch Condition="$(RuntimeIdentifier.EndsWith('-arm64')) Or ('$(RuntimeIdentifier)' == '' And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64')">arm64</NativeArch>
-  </PropertyGroup>
   <ItemGroup>
-    <!-- prebuilt native libraries (FBX exporter, vkd3d-shader, SPIRV-Cross), loaded from x64/ or arm64/ next to the executable -->
-    <ContentWithTargetPath Include="Libraries\$(NativeArch)\*.so" Exclude="Libraries\$(NativeArch)\libTexture2DDecoderNative.so">
+    <!-- prebuilt native libraries (FBX exporter), loaded from x64/ next to the executable -->
+    <ContentWithTargetPath Include="Libraries\x64\*.so">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <TargetPath>$(NativeArch)\%(Filename)%(Extension)</TargetPath>
-    </ContentWithTargetPath>
-    <!-- texture decoder for architectures the Kyaru.Texture2DDecoder.Linux package has no binary for (arm64);
-         it goes next to the executable, where [DllImport("Texture2DDecoderNative")] probes -->
-    <ContentWithTargetPath Include="Libraries\$(NativeArch)\libTexture2DDecoderNative.so" Condition="Exists('Libraries\$(NativeArch)\libTexture2DDecoderNative.so')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <TargetPath>%(Filename)%(Extension)</TargetPath>
+      <TargetPath>x64\%(Filename)%(Extension)</TargetPath>
     </ContentWithTargetPath>
   </ItemGroup>
   <ItemGroup>

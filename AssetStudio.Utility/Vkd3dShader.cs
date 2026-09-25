@@ -11,8 +11,8 @@ namespace AssetStudio
     /// Translates Direct3D shader byte code (SM2/3 D3D bytecode, SM4/5 DXBC) to Vulkan SPIR-V with
     /// vkd3d-shader (Wine's D3D12-on-Vulkan shader compiler), and SPIR-V to Vulkan GLSL with SPIRV-Cross.
     /// Used instead of d3dcompiler / HLSLDecompiler where those Windows libraries are not available.
-    /// The libraries are loaded from the platform folder next to the executable (x64/ or arm64/: libvkd3d-shader.so,
-    /// libspirv-cross-c-shared.so), falling back to the system libraries.
+    /// The libraries are loaded from the platform folder next to the executable (x64/libvkd3d-shader.so,
+    /// x64/libspirv-cross-c-shared.so), falling back to the system libraries.
     /// </summary>
     public static class Vkd3dShader
     {
