@@ -9,7 +9,29 @@ permissions:
     contents: write # Required for creating releases
 
 jobs:
+    build-linux:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup .NET
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: 8.0.x
+
+            - name: Build Linux release (Avalonia GUI + CLI)
+              run: ./build-linux.sh
+
+            - name: Upload Linux Package
+              uses: actions/upload-artifact@v4
+              with:
+                  name: AssetStudio-linux-x64
+                  path: dist/AssetStudio-linux-x64.tar.gz
+
     build:
+        needs: build-linux
         runs-on: windows-latest
 
         steps:
@@ -70,12 +92,18 @@ jobs:
                   Compress-Archive -Path "release-net10/*" -DestinationPath "AssetStudio-net10.0-win.zip"
               shell: pwsh
 
+            - name: Download Linux Package
+              uses: actions/download-artifact@v4
+              with:
+                  name: AssetStudio-linux-x64
+
             - name: Create Release
               uses: softprops/action-gh-release@v2
               with:
                   files: |
                       AssetStudio-net8.0-win.zip
                       AssetStudio-net10.0-win.zip
+                      AssetStudio-linux-x64.tar.gz
                   draft: false
                   prerelease: false
                   generate_release_notes: true
