@@ -17,7 +17,6 @@ dotnet run --project AssetStudio.Avalonia -- /path/to/game/Data
 
 # self-contained release (no .NET needed on the target machine)
 ./build-linux.sh                      # -> dist/AssetStudio-linux-x64 (+ .tar.gz)
-RID=linux-arm64 ./build-linux.sh      # other architectures
 SELF_CONTAINED=false ./build-linux.sh # smaller, needs the .NET 8 runtime
 
 # add a launcher to the application menu (run inside the release folder)
@@ -70,7 +69,7 @@ Windows; when that folder is read-only (AppImage, `.deb` install) they go to `~/
 | SPIRV-Cross (`libspirv-cross-c-shared.so`) | SPIR-V → Vulkan GLSL (readable shader code) | included (Apache-2.0, rebuilt via `build-spirvcross-linux.sh`). Without it the SPIR-V disassembly is written instead |
 | Vulkan loader + driver (`libvulkan.so.1`) | GPU mesh / model preview | system (e.g. `libvulkan1` + the GPU driver's Vulkan ICD) |
 
-Optional libraries are loaded from the `x64/` (or `arm64/`) folder next to the executable using Linux names:
+Optional libraries are loaded from the `x64/` folder next to the executable using Linux names:
 
 - FMOD: download the *FMOD Engine* for Linux from fmod.com (free account needed) and copy
   `api/core/lib/x86_64/libfmod.so*` to `x64/libfmod.so`.

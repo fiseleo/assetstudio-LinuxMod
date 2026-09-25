@@ -2,12 +2,13 @@
 # Build the Linux release: Avalonia GUI + CLI, self-contained (no .NET install needed to run).
 #
 #   ./build-linux.sh                 # linux-x64 -> dist/AssetStudio-linux-x64
-#   RID=linux-arm64 ./build-linux.sh # other runtime identifiers
 #   SELF_CONTAINED=false ./build-linux.sh  # smaller, needs the .NET 8 runtime installed
 set -euo pipefail
 
 cd "$(dirname "$0")"
 RID="${RID:-linux-x64}"
+# only x86-64: the native libraries (FBX SDK, texture decoder, vkd3d, SPIRV-Cross) are built for it
+[ "$RID" = linux-x64 ] || { echo "only linux-x64 is supported" >&2; exit 1; }
 SELF_CONTAINED="${SELF_CONTAINED:-true}"
 OUT="dist/AssetStudio-${RID}"
 

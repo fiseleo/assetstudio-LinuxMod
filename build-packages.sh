@@ -2,7 +2,6 @@
 # Package the Linux release built by build-linux.sh as an AppImage and a .deb.
 #
 #   ./build-packages.sh                   # linux-x64: dist/AssetStudio-x86_64.AppImage, dist/assetstudio_<ver>_amd64.deb
-#   RID=linux-arm64 ./build-packages.sh   # aarch64 / arm64
 #   FORMATS=deb ./build-packages.sh       # only one format (appimage, deb)
 #
 # The release folder is built first when it does not exist. appimagetool is downloaded to build/ on first use.
@@ -16,7 +15,6 @@ VERSION="$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' AssetStudio.Avalonia/As
 VERSION="${VERSION:-0.0.0}"
 case "$RID" in
     linux-x64) APPIMAGE_ARCH=x86_64; DEB_ARCH=amd64 ;;
-    linux-arm64) APPIMAGE_ARCH=aarch64; DEB_ARCH=arm64 ;;
     *) echo "unsupported RID $RID" >&2; exit 1 ;;
 esac
 
