@@ -789,7 +789,8 @@ namespace AssetStudio
             if ((version[0] == 2021 && version[1] > 3) ||
                version[0] == 2021 && version[1] == 3 && version[2] >= 10 || //2021.3.10f1 and up
                (version[0] == 2022 && version[1] > 1) ||
-               version[0] == 2022 && version[1] == 1 && version[2] >= 13) //2022.1.13f1 and up
+               version[0] == 2022 && version[1] == 1 && version[2] >= 13 || //2022.1.13f1 and up
+               version[0] > 2022) //2023, Unity 6
             {
                 int numPlayerSubPrograms = reader.ReadInt32();
                 m_PlayerSubPrograms = new List<List<SerializedPlayerSubProgram>>();
@@ -857,7 +858,7 @@ namespace AssetStudio
         {
             var version = reader.version;
 
-            if (version[0] > 2020 || (version[0] == 2020 && version[1] >= 2)) //2020.2 and up
+            if ((version[0] > 2020 || (version[0] == 2020 && version[1] >= 2)) && version[0] < 6000) //2020.2 ~ 2023.x (not serialized in Unity 6)
             {
                 int numEditorDataHash = reader.ReadInt32();
                 m_EditorDataHash = new List<Hash128>();
@@ -1081,20 +1082,6 @@ namespace AssetStudio
 
         public Shader(ObjectReader reader) : base(reader)
         {
-            // Unity 6000+ has format changes that break manual parsing
-            // Skip shader parsing entirely - we don't need it for texture extraction
-            if (version[0] >= 6000)
-            {
-                Logger.Verbose($"Skipping Shader manual parsing for Unity {version[0]}.{version[1]} (use TypeTree dump if needed)");
-                // Read remaining bytes to advance stream position correctly
-                var remaining = reader.byteSize - (reader.Position - reader.byteStart);
-                if (remaining > 0)
-                {
-                    reader.ReadBytes((int)remaining);
-                }
-                return;
-            }
-
             if (version[0] == 5 && version[1] >= 5 || version[0] > 5) //5.5 and up
             {
                 m_ParsedForm = new SerializedShader(reader);
@@ -1134,7 +1121,8 @@ namespace AssetStudio
                 if ((version[0] == 2021 && version[1] > 3) ||
                     version[0] == 2021 && version[1] == 3 && version[2] >= 12 || //2021.3.12f1 and up
                     (version[0] == 2022 && version[1] > 1) ||
-                    version[0] == 2022 && version[1] == 1 && version[2] >= 21) //2022.1.21f1 and up
+                    version[0] == 2022 && version[1] == 1 && version[2] >= 21 || //2022.1.21f1 and up
+                    version[0] > 2022) //2023, Unity 6
                 {
                     stageCounts = reader.ReadUInt32Array();
                 }

@@ -113,3 +113,18 @@ Unity 6000 may have additional format changes beyond shaders. Monitor for:
 - Other asset types with parsing issues
 - New Unity 6000-specific features requiring format updates
 - Continued evolution in Unity 6.x series requiring additional version-specific handling
+
+## Shader parsing and export (Linux port, 2026-09)
+
+Shader parsing had been skipped for Unity 6000 (the whole object was read as raw bytes), so shader export produced
+nothing. Checked against the TypeTree of a 6000.0.65f1 player (UnityDataTools `PlayerWithTypeTrees`):
+
+- `SerializedPass`: `m_EditorDataHash` / `m_Platforms` (and the keyword masks) are not serialized in Unity 6.
+- `SerializedProgram.m_PlayerSubPrograms` / `m_ParameterBlobIndices` and `Shader.stageCounts` exist in 2021.3.10+,
+  2022.1.13+ **and every later version**; the version checks only listed 2021/2022, so 2023 and Unity 6 missed them.
+- Everything else matches 2022.3.
+
+Export: player builds of 2021.3.10+ / 2022.1.13+ / Unity 6 keep the subprograms in `m_PlayerSubPrograms`
+(`m_SubPrograms` is empty), which the converter ignored, so their shaders had no programs. They are exported now.
+The compressed blob of these versions also holds parameter entries (referenced by `m_ParameterBlobIndices`),
+which are skipped instead of being parsed as programs.

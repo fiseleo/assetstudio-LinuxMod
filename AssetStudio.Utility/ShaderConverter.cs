@@ -158,49 +158,64 @@ namespace AssetStudio
                 {
                     sb.Append(ConvertSerializedShaderState(m_Passe.m_State));
 
-                    if (m_Passe.progVertex.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"vp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progVertex.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progFragment.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"fp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progFragment.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progGeometry.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"gp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progGeometry.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progHull.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"hp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progHull.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progDomain.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"dp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progDomain.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progRayTracing?.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"rtp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progRayTracing.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
+                    sb.Append(ConvertSerializedProgram("vp", m_Passe.progVertex, platforms, shaderPrograms));
+                    sb.Append(ConvertSerializedProgram("fp", m_Passe.progFragment, platforms, shaderPrograms));
+                    sb.Append(ConvertSerializedProgram("gp", m_Passe.progGeometry, platforms, shaderPrograms));
+                    sb.Append(ConvertSerializedProgram("hp", m_Passe.progHull, platforms, shaderPrograms));
+                    sb.Append(ConvertSerializedProgram("dp", m_Passe.progDomain, platforms, shaderPrograms));
+                    sb.Append(ConvertSerializedProgram("rtp", m_Passe.progRayTracing, platforms, shaderPrograms));
                 }
                 sb.Append("}\n");
+            }
+            return sb.ToString();
+        }
+
+        private static string ConvertSerializedProgram(string name, SerializedProgram program, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms)
+        {
+            string body = null;
+            if (program?.m_SubPrograms.Count > 0)
+            {
+                body = ConvertSerializedSubPrograms(program.m_SubPrograms, platforms, shaderPrograms);
+            }
+            else if (program?.m_PlayerSubPrograms?.Any(x => x.Count > 0) == true)
+            {
+                body = ConvertSerializedPlayerSubPrograms(program.m_PlayerSubPrograms, platforms, shaderPrograms);
+            }
+            return body == null ? "" : $"Program \"{name}\" {{\n{body}}}\n";
+        }
+
+        /// <summary>
+        /// Player builds of 2021.3.10+ / 2022.1.13+ / Unity 6 keep the subprograms in m_PlayerSubPrograms
+        /// (m_SubPrograms is empty). The blob index is looked up in the program list of the platform
+        /// that matches the GPU program type.
+        /// </summary>
+        private static string ConvertSerializedPlayerSubPrograms(List<List<SerializedPlayerSubProgram>> m_PlayerSubPrograms, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms)
+        {
+            var sb = new StringBuilder();
+            var isTier = m_PlayerSubPrograms.Count(x => x.Count > 0) > 1;
+            for (int tier = 0; tier < m_PlayerSubPrograms.Count; tier++)
+            {
+                foreach (var subProgram in m_PlayerSubPrograms[tier])
+                {
+                    for (int i = 0; i < platforms.Length; i++)
+                    {
+                        var programs = shaderPrograms[i]?.m_SubPrograms;
+                        if (!CheckGpuProgramUsable(platforms[i], subProgram.m_GpuProgramType) || programs == null
+                            || subProgram.m_BlobIndex >= programs.Length || programs[subProgram.m_BlobIndex] == null)
+                        {
+                            continue;
+                        }
+                        sb.Append($"SubProgram \"{GetPlatformString(platforms[i])} ");
+                        if (isTier)
+                        {
+                            sb.Append($"hw_tier{tier:00} ");
+                        }
+                        sb.Append("\" {\n");
+                        sb.Append(programs[subProgram.m_BlobIndex].Export());
+                        sb.Append("\n}\n");
+                        break;
+                    }
+                }
             }
             return sb.ToString();
         }
@@ -935,7 +950,15 @@ namespace AssetStudio
                 if (entry.Segment == segment)
                 {
                     reader.BaseStream.Position = entry.Offset;
-                    m_SubPrograms[i] = new ShaderSubProgram(reader, hasUpdatedGpuProgram);
+                    try
+                    {
+                        m_SubPrograms[i] = new ShaderSubProgram(reader, hasUpdatedGpuProgram);
+                    }
+                    catch (Exception e) when (e is EndOfStreamException || e is ArgumentOutOfRangeException || e is OverflowException || e is OutOfMemoryException)
+                    {
+                        // 2021.3.10+ blobs also hold parameter entries (see m_ParameterBlobIndices), which are not programs
+                        Logger.Verbose($"Shader blob entry {i} is not a program: {e.Message}");
+                    }
                 }
             }
         }
