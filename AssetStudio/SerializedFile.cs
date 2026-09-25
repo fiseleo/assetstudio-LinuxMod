@@ -248,6 +248,11 @@ namespace AssetStudio
                 }
             }
 
+            if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees && m_EnableTypeTree)
+            {
+                ResolveSharedTypeTrees();
+            }
+
             if (header.m_Version >= SerializedFileFormatVersion.Unknown_5)
             {
                 userInformation = reader.ReadStringToNull();
@@ -307,12 +312,23 @@ namespace AssetStudio
                 type.m_OldTypeHash = reader.ReadBytes(16);
             }
 
+            if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
+            {
+                type.m_TypeTreeHash = reader.ReadBytes(16);
+            }
+
             if (m_EnableTypeTree)
             {
                 Logger.Verbose($"File has type tree enabled !!");
                 type.m_Type = new TypeTree();
                 type.m_Type.m_Nodes = new List<TypeTreeNode>();
-                if (header.m_Version >= SerializedFileFormatVersion.Unknown_12 || header.m_Version == SerializedFileFormatVersion.Unknown_10)
+                if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
+                {
+                    reader.ReadUInt32(); // blob size
+                    // the referenced sub trees are only known after the reference types, see ResolveSharedTypeTrees
+                    pendingTypeTrees.Add((type.m_Type, ReadSharedTypeTreeBlob()));
+                }
+                else if (header.m_Version >= SerializedFileFormatVersion.Unknown_12 || header.m_Version == SerializedFileFormatVersion.Unknown_10)
                 {
                     TypeTreeBlobRead(type.m_Type);
                 }
@@ -425,6 +441,107 @@ namespace AssetStudio
                 return offset.ToString();
             }
         }
+
+        #region Shared type trees (SerializedFileFormatVersion.SharedTypeTrees)
+
+        private sealed class SharedTypeTreeBlob
+        {
+            public (ushort version, byte level, byte flags, uint typeStr, uint nameStr, int byteSize, int index, int metaFlag, ulong reference)[] nodes;
+            public byte[] strings;
+            public string[] references; // hashes of the referenced sub trees
+        }
+
+        private const byte SubTreeReferenceFlag = 0x20;
+        private readonly List<(TypeTree tree, SharedTypeTreeBlob blob)> pendingTypeTrees = new List<(TypeTree, SharedTypeTreeBlob)>();
+
+        private SharedTypeTreeBlob ReadSharedTypeTreeBlob()
+        {
+            var magic = reader.ReadBytes(4);
+            if (magic.Length != 4 || magic[0] != 'm' || magic[1] != 'h' || magic[2] != 't' || magic[3] != 't')
+                throw new InvalidDataException($"unexpected type tree blob magic {Convert.ToHexString(magic)}");
+            reader.ReadUInt32(); // blob version
+            var numberOfNodes = reader.ReadInt32();
+            var stringBufferSize = reader.ReadInt32();
+            var blob = new SharedTypeTreeBlob { nodes = new (ushort, byte, byte, uint, uint, int, int, int, ulong)[numberOfNodes] };
+            for (int i = 0; i < numberOfNodes; i++)
+            {
+                blob.nodes[i] = (reader.ReadUInt16(), reader.ReadByte(), reader.ReadByte(), reader.ReadUInt32(), reader.ReadUInt32(),
+                    reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadUInt64());
+            }
+            blob.strings = reader.ReadBytes(stringBufferSize);
+            blob.references = new string[reader.ReadInt32()];
+            for (int i = 0; i < blob.references.Length; i++)
+            {
+                blob.references[i] = Convert.ToHexString(reader.ReadBytes(16));
+            }
+            return blob;
+        }
+
+        /// <summary>Reads the sub tree table and expands the sub tree references of every type tree.</summary>
+        private void ResolveSharedTypeTrees()
+        {
+            var count = reader.ReadInt32();
+            var subTrees = new Dictionary<string, SharedTypeTreeBlob>(count);
+            for (int i = 0; i < count; i++)
+            {
+                var hash = Convert.ToHexString(reader.ReadBytes(16));
+                reader.ReadUInt32(); // blob size
+                subTrees[hash] = ReadSharedTypeTreeBlob();
+            }
+            foreach (var (tree, blob) in pendingTypeTrees)
+            {
+                AppendSharedTypeTree(tree.m_Nodes, blob, 0, false, subTrees, 0);
+            }
+            pendingTypeTrees.Clear();
+        }
+
+        private void AppendSharedTypeTree(List<TypeTreeNode> nodes, SharedTypeTreeBlob blob, int baseLevel, bool skipRoot,
+            Dictionary<string, SharedTypeTreeBlob> subTrees, int depth)
+        {
+            if (depth > 64)
+                throw new InvalidDataException("type tree references nested too deeply");
+            for (int i = skipRoot ? 1 : 0; i < blob.nodes.Length; i++)
+            {
+                var raw = blob.nodes[i];
+                var level = baseLevel + raw.level;
+                nodes.Add(new TypeTreeNode
+                {
+                    m_Version = raw.version,
+                    m_Level = level,
+                    m_TypeFlags = raw.flags & ~SubTreeReferenceFlag,
+                    m_Type = ReadSharedString(blob.strings, raw.typeStr),
+                    m_Name = ReadSharedString(blob.strings, raw.nameStr),
+                    m_ByteSize = raw.byteSize,
+                    m_Index = nodes.Count,
+                    m_MetaFlag = raw.metaFlag,
+                });
+                if ((raw.flags & SubTreeReferenceFlag) != 0)
+                {
+                    // the node stands for the root of the sub tree, its children follow one level below it
+                    if (raw.reference < (ulong)blob.references.Length && subTrees.TryGetValue(blob.references[raw.reference], out var subTree))
+                    {
+                        AppendSharedTypeTree(nodes, subTree, level, true, subTrees, depth + 1);
+                    }
+                    else
+                    {
+                        Logger.Warning($"Type tree of {fileName}: sub tree {raw.reference} not found");
+                    }
+                }
+            }
+        }
+
+        private static string ReadSharedString(byte[] strings, uint value)
+        {
+            if ((value & 0x80000000) != 0)
+            {
+                var offset = value & 0x7FFFFFFF;
+                return CommonString.StringBuffer.TryGetValue(offset, out var str) ? str : offset.ToString();
+            }
+            var end = Array.IndexOf(strings, (byte)0, (int)value);
+            return System.Text.Encoding.UTF8.GetString(strings, (int)value, (end < 0 ? strings.Length : end) - (int)value);
+        }
+
+        #endregion
 
         public void AddObject(Object obj)
         {

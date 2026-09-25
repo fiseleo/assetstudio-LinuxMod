@@ -82,6 +82,19 @@ namespace AssetStudio
         /// <summary>
         /// 2020.1 to 2023.x / 6000.x (Unity 6)
         /// </summary>
-        LargeFilesSupport = 22
+        LargeFilesSupport = 22,
+
+        Unknown_23 = 23,
+
+        Unknown_24 = 24,
+
+        Unknown_25 = 25,
+
+        /// <summary>
+        /// 6000.7 (seen in 6000.7.0b2): type trees are split into shareable sub trees. Each type stores an extra
+        /// 16-byte hash and a size-prefixed "mhtt" blob whose nodes with type flag 0x20 reference a sub tree
+        /// by hash; the sub trees follow the reference types in one table.
+        /// </summary>
+        SharedTypeTrees = 26
     }
 }

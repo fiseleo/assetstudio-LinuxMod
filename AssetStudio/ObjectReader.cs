@@ -18,6 +18,22 @@ namespace AssetStudio
         public int[] version => assetsFile.version;
         public BuildType buildType => assetsFile.buildType;
 
+        /// <summary>
+        /// True for this Unity version or a later one, including the release stage, e.g. (6000, 5, 0, 'a', 7) for 6000.5.0a7:
+        /// Unity 6 changes serialized layouts in the middle of alpha cycles.
+        /// </summary>
+        public bool IsVersionAtLeast(int major, int minor, int patch = 0, char type = 'a', int build = 0)
+        {
+            var v = version;
+            int Part(int i) => i < v.Length ? v[i] : 0;
+            if (Part(0) != major) return Part(0) > major;
+            if (Part(1) != minor) return Part(1) > minor;
+            if (Part(2) != patch) return Part(2) > patch;
+            var order = new BuildType(type.ToString()).Order;
+            if (buildType.Order != order) return buildType.Order > order;
+            return Part(3) >= build;
+        }
+
         public ObjectReader(EndianBinaryReader reader, SerializedFile assetsFile, ObjectInfo objectInfo, Game game) : base(reader.BaseStream, reader.Endian)
         {
             this.assetsFile = assetsFile;
