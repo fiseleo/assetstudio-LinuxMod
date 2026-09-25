@@ -2122,7 +2122,7 @@ namespace AssetStudio.Avalonia.Views
                 StatusStripUpdate("Unable to preview this model");
                 return;
             }
-            assetItem.InfoText = $"Vertices: {renderer.VertexCount}\nTriangles: {renderer.TriangleCount}";
+            assetItem.InfoText = $"Vertices: {renderer.VertexCount}\nTriangles: {renderer.TriangleCount}\nTextures: {renderer.TextureCount}";
             ShowMesh(assetItem, renderer);
         }
 

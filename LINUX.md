@@ -77,7 +77,7 @@ Optional libraries are loaded from the `x64/` (or `arm64/`) folder next to the e
 ### Vulkan
 
 - **Model preview**: meshes and models are rendered on the GPU with Vulkan (offscreen, 4x MSAA, smooth shading with the
-  mesh normals). The device is picked automatically (discrete GPU > integrated > software lavapipe) and shown in the
+  mesh normals, textured with each material's main texture, mipmapped). The device is picked automatically (discrete GPU > integrated > software lavapipe) and shown in the
   status bar / log. Without a usable Vulkan driver the built-in software renderer is used; force it with
   `ASSETSTUDIO_RENDERER=software`. The preview shaders are in `AssetStudio.Avalonia/Shaders` (GLSL, embedded as SPIR-V;
   rebuild with `Shaders/compile.sh`, needs `glslc`).
@@ -94,7 +94,7 @@ instead (play / stop only).
 
 - Linux 版 GUI 是 `AssetStudio.Avalonia`（Avalonia 跨平台介面），功能與選單與 Windows 版相同。
 - 執行：`dotnet run --project AssetStudio.Avalonia`；打包：`./build-linux.sh`，產生 `dist/AssetStudio-linux-x64`（含 GUI 與 CLI，不需安裝 .NET）。
-- 模型預覽使用 Vulkan GPU 算繪（自動選擇顯示卡，狀態列會顯示；沒有 Vulkan 時改用軟體算繪，可用 `ASSETSTUDIO_RENDERER=software` 強制）。
+- 模型預覽使用 Vulkan GPU 算繪，會貼上材質的主貼圖（自動選擇顯示卡，狀態列會顯示；沒有 Vulkan 時改用軟體算繪，可用 `ASSETSTUDIO_RENDERER=software` 強制）。
 - Shader 匯出：DirectX 程式在 Linux 上改走 Vulkan：vkd3d-shader 轉成 SPIR-V，再由 SPIRV-Cross 反編譯成 Vulkan GLSL（取代 Windows 專用的 HLSL 反編譯器）。
 - 貼圖解碼、FBX 匯出（`x64/libAssetStudio.FBXNative.so`，需 glibc 2.28 以上）都已內建；音訊沒有 FMOD 時會用 Fmod5Sharp 轉成 `.ogg`/`.wav`。
 - 重新編譯 FBX 原生庫：安裝 Linux 版 Autodesk FBX SDK 後執行 `FBXSDK_ROOT=... ./build-fbxnative-linux.sh`。

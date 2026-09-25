@@ -1,12 +1,14 @@
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 
 namespace AssetStudio.Avalonia
 {
     using Matrix4x4 = System.Numerics.Matrix4x4;
+    using Vector2 = System.Numerics.Vector2;
     using Vector3 = System.Numerics.Vector3;
     using VkBuffer = Silk.NET.Vulkan.Buffer;
     using VkImage = Silk.NET.Vulkan.Image;
@@ -19,6 +21,14 @@ namespace AssetStudio.Avalonia
         internal uint IndexCount, EdgeCount;
         internal bool HasNormals;
         internal VulkanMeshRenderer Owner;
+        // textures, one descriptor set each; the last set samples the renderer's white texture (untextured ranges)
+        internal VkImage[] TextureImages = Array.Empty<VkImage>();
+        internal DeviceMemory[] TextureMemories = Array.Empty<DeviceMemory>();
+        internal ImageView[] TextureViews = Array.Empty<ImageView>();
+        internal DescriptorPool DescriptorPool;
+        internal DescriptorSet[] DescriptorSets = Array.Empty<DescriptorSet>();
+        /// <summary>first index, index count, descriptor set</summary>
+        internal List<(uint First, uint Count, int Set)> Draws = new();
 
         public void Dispose()
         {
@@ -37,6 +47,7 @@ namespace AssetStudio.Avalonia
     {
         private const Format ColorFormat = Format.B8G8R8A8Unorm;
         private const int PushConstantSize = 128;
+        private const int VertexFloats = 8;
 
         private static VulkanMeshRenderer instance;
         private static bool initialized;
@@ -88,6 +99,12 @@ namespace AssetStudio.Avalonia
         private Fence fence;
         private RenderPass renderPass;
         private PipelineLayout pipelineLayout;
+        private DescriptorSetLayout descriptorSetLayout;
+        private Sampler sampler;
+        private VkImage whiteImage;
+        private DeviceMemory whiteMemory;
+        private ImageView whiteView;
+        private bool canBlitMipmaps;
         private Pipeline fillPipeline, wireOverlayPipeline, wireOnlyPipeline, backgroundPipeline;
         private SampleCountFlags samples;
         private Format depthFormat;
@@ -113,6 +130,7 @@ namespace AssetStudio.Avalonia
                 CreateDevice();
                 CreateRenderPass();
                 CreatePipelines();
+                CreateSampler();
             }
             catch
             {
@@ -363,9 +381,26 @@ namespace AssetStudio.Avalonia
                 Offset = 0,
                 Size = PushConstantSize,
             };
+            var textureBinding = new DescriptorSetLayoutBinding
+            {
+                Binding = 0,
+                DescriptorType = DescriptorType.CombinedImageSampler,
+                DescriptorCount = 1,
+                StageFlags = ShaderStageFlags.FragmentBit,
+            };
+            var setLayoutInfo = new DescriptorSetLayoutCreateInfo
+            {
+                SType = StructureType.DescriptorSetLayoutCreateInfo,
+                BindingCount = 1,
+                PBindings = &textureBinding,
+            };
+            Check(vk.CreateDescriptorSetLayout(device, in setLayoutInfo, null, out descriptorSetLayout), "vkCreateDescriptorSetLayout");
+            var setLayout = descriptorSetLayout;
             var layoutInfo = new PipelineLayoutCreateInfo
             {
                 SType = StructureType.PipelineLayoutCreateInfo,
+                SetLayoutCount = 1,
+                PSetLayouts = &setLayout,
                 PushConstantRangeCount = 1,
                 PPushConstantRanges = &range,
             };
@@ -413,17 +448,18 @@ namespace AssetStudio.Avalonia
                     PName = entry,
                 };
 
-                // position (vec3) + normal (vec3)
-                var binding = new VertexInputBindingDescription { Binding = 0, Stride = 24, InputRate = VertexInputRate.Vertex };
-                var attributes = stackalloc VertexInputAttributeDescription[2];
+                // position (vec3) + normal (vec3) + uv (vec2)
+                var binding = new VertexInputBindingDescription { Binding = 0, Stride = VertexFloats * 4, InputRate = VertexInputRate.Vertex };
+                var attributes = stackalloc VertexInputAttributeDescription[3];
                 attributes[0] = new VertexInputAttributeDescription { Location = 0, Binding = 0, Format = Format.R32G32B32Sfloat, Offset = 0 };
                 attributes[1] = new VertexInputAttributeDescription { Location = 1, Binding = 0, Format = Format.R32G32B32Sfloat, Offset = 12 };
+                attributes[2] = new VertexInputAttributeDescription { Location = 2, Binding = 0, Format = Format.R32G32Sfloat, Offset = 24 };
                 var vertexInputInfo = new PipelineVertexInputStateCreateInfo
                 {
                     SType = StructureType.PipelineVertexInputStateCreateInfo,
                     VertexBindingDescriptionCount = vertexInput ? 1u : 0u,
                     PVertexBindingDescriptions = vertexInput ? &binding : null,
-                    VertexAttributeDescriptionCount = vertexInput ? 2u : 0u,
+                    VertexAttributeDescriptionCount = vertexInput ? 3u : 0u,
                     PVertexAttributeDescriptions = vertexInput ? attributes : null,
                 };
                 var inputAssembly = new PipelineInputAssemblyStateCreateInfo
@@ -669,39 +705,260 @@ namespace AssetStudio.Avalonia
 
         #endregion
 
-        /// <summary>Uploads a mesh. Triangles with out of range indices are dropped.</summary>
-        public VulkanMesh Upload(Vector3[] vertices, Vector3[] normals, int[] indices)
+        #region Textures
+
+        private void CreateSampler()
         {
-            var vertexData = new float[Math.Max(1, vertices.Length) * 6];
+            vk.GetPhysicalDeviceFormatProperties(physicalDevice, ColorFormat, out var formatProps);
+            const FormatFeatureFlags blit = FormatFeatureFlags.BlitSrcBit | FormatFeatureFlags.BlitDstBit | FormatFeatureFlags.SampledImageFilterLinearBit;
+            canBlitMipmaps = (formatProps.OptimalTilingFeatures & blit) == blit;
+            var info = new SamplerCreateInfo
+            {
+                SType = StructureType.SamplerCreateInfo,
+                MagFilter = Filter.Linear,
+                MinFilter = Filter.Linear,
+                MipmapMode = SamplerMipmapMode.Linear,
+                AddressModeU = SamplerAddressMode.Repeat,
+                AddressModeV = SamplerAddressMode.Repeat,
+                AddressModeW = SamplerAddressMode.Repeat,
+                MaxLod = 16,
+            };
+            Check(vk.CreateSampler(device, in info, null, out sampler), "vkCreateSampler");
+            UploadTexture(new PreviewTexture(new byte[] { 255, 255, 255, 255 }, 1, 1), out whiteImage, out whiteMemory, out whiteView);
+        }
+
+        /// <summary>Records <paramref name="record"/> into the command buffer, submits it and waits.</summary>
+        private void Submit(Action<CommandBuffer> record)
+        {
+            Check(vk.ResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
+            var beginInfo = new CommandBufferBeginInfo { SType = StructureType.CommandBufferBeginInfo, Flags = CommandBufferUsageFlags.OneTimeSubmitBit };
+            Check(vk.BeginCommandBuffer(commandBuffer, in beginInfo), "vkBeginCommandBuffer");
+            record(commandBuffer);
+            Check(vk.EndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            var cmd = commandBuffer;
+            var submitInfo = new SubmitInfo { SType = StructureType.SubmitInfo, CommandBufferCount = 1, PCommandBuffers = &cmd };
+            Check(vk.QueueSubmit(queue, 1, in submitInfo, fence), "vkQueueSubmit");
+            var f = fence;
+            Check(vk.WaitForFences(device, 1, &f, true, 10_000_000_000UL), "vkWaitForFences");
+            Check(vk.ResetFences(device, 1, &f), "vkResetFences");
+        }
+
+        private void ImageBarrier(CommandBuffer cmd, VkImage image, uint mip, uint mipCount, ImageLayout from, ImageLayout to,
+            AccessFlags srcAccess, AccessFlags dstAccess, PipelineStageFlags srcStage, PipelineStageFlags dstStage)
+        {
+            var barrier = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                OldLayout = from,
+                NewLayout = to,
+                SrcAccessMask = srcAccess,
+                DstAccessMask = dstAccess,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = image,
+                SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, mip, mipCount, 0, 1),
+            };
+            vk.CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, in barrier);
+        }
+
+        /// <summary>Uploads a BGRA texture with a full mip chain (generated on the GPU when the format supports blits).</summary>
+        private void UploadTexture(PreviewTexture texture, out VkImage image, out DeviceMemory memory, out ImageView view)
+        {
+            int width = texture.Width, height = texture.Height;
+            var mipLevels = canBlitMipmaps ? (uint)Math.Floor(Math.Log2(Math.Max(width, height))) + 1 : 1u;
+            var info = new ImageCreateInfo
+            {
+                SType = StructureType.ImageCreateInfo,
+                ImageType = ImageType.Type2D,
+                Format = ColorFormat,
+                Extent = new Extent3D((uint)width, (uint)height, 1),
+                MipLevels = mipLevels,
+                ArrayLayers = 1,
+                Samples = SampleCountFlags.Count1Bit,
+                Tiling = ImageTiling.Optimal,
+                Usage = ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit,
+                SharingMode = SharingMode.Exclusive,
+                InitialLayout = ImageLayout.Undefined,
+            };
+            image = default;
+            memory = default;
+            view = default;
+            VkBuffer staging = default;
+            DeviceMemory stagingMemory = default;
+            try
+            {
+                Check(vk.CreateImage(device, in info, null, out image), "vkCreateImage");
+                vk.GetImageMemoryRequirements(device, image, out var requirements);
+                var allocInfo = new MemoryAllocateInfo
+                {
+                    SType = StructureType.MemoryAllocateInfo,
+                    AllocationSize = requirements.Size,
+                    MemoryTypeIndex = FindMemoryType(requirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit),
+                };
+                Check(vk.AllocateMemory(device, in allocInfo, null, out memory), "vkAllocateMemory");
+                Check(vk.BindImageMemory(device, image, memory, 0), "vkBindImageMemory");
+
+                CreateBuffer<byte>(texture.Bgra.AsSpan(0, width * height * 4), BufferUsageFlags.TransferSrcBit, out staging, out stagingMemory);
+                var target = image;
+                var source = staging;
+                Submit(cmd =>
+                {
+                    ImageBarrier(cmd, target, 0, mipLevels, ImageLayout.Undefined, ImageLayout.TransferDstOptimal,
+                        0, AccessFlags.TransferWriteBit, PipelineStageFlags.TopOfPipeBit, PipelineStageFlags.TransferBit);
+                    var region = new BufferImageCopy
+                    {
+                        ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, 1),
+                        ImageExtent = new Extent3D((uint)width, (uint)height, 1),
+                    };
+                    vk.CmdCopyBufferToImage(cmd, source, target, ImageLayout.TransferDstOptimal, 1, in region);
+                    int w = width, h = height;
+                    for (uint mip = 1; mip < mipLevels; mip++)
+                    {
+                        ImageBarrier(cmd, target, mip - 1, 1, ImageLayout.TransferDstOptimal, ImageLayout.TransferSrcOptimal,
+                            AccessFlags.TransferWriteBit, AccessFlags.TransferReadBit, PipelineStageFlags.TransferBit, PipelineStageFlags.TransferBit);
+                        int nw = Math.Max(1, w / 2), nh = Math.Max(1, h / 2);
+                        var blit = new ImageBlit
+                        {
+                            SrcSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, mip - 1, 0, 1),
+                            DstSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, mip, 0, 1),
+                        };
+                        blit.SrcOffsets[1] = new Offset3D(w, h, 1);
+                        blit.DstOffsets[1] = new Offset3D(nw, nh, 1);
+                        vk.CmdBlitImage(cmd, target, ImageLayout.TransferSrcOptimal, target, ImageLayout.TransferDstOptimal, 1, in blit, Filter.Linear);
+                        ImageBarrier(cmd, target, mip - 1, 1, ImageLayout.TransferSrcOptimal, ImageLayout.ShaderReadOnlyOptimal,
+                            AccessFlags.TransferReadBit, AccessFlags.ShaderReadBit, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit);
+                        w = nw;
+                        h = nh;
+                    }
+                    ImageBarrier(cmd, target, mipLevels - 1, 1, ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal,
+                        AccessFlags.TransferWriteBit, AccessFlags.ShaderReadBit, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit);
+                });
+
+                var viewInfo = new ImageViewCreateInfo
+                {
+                    SType = StructureType.ImageViewCreateInfo,
+                    Image = image,
+                    ViewType = ImageViewType.Type2D,
+                    Format = ColorFormat,
+                    SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, mipLevels, 0, 1),
+                };
+                Check(vk.CreateImageView(device, in viewInfo, null, out view), "vkCreateImageView");
+            }
+            catch
+            {
+                DestroyImage(ref image, ref memory, ref view);
+                throw;
+            }
+            finally
+            {
+                DestroyBuffer(ref staging, ref stagingMemory);
+            }
+        }
+
+        private void CreateDescriptorSets(VulkanMesh mesh)
+        {
+            var count = (uint)mesh.TextureViews.Length + 1;
+            var poolSize = new DescriptorPoolSize { Type = DescriptorType.CombinedImageSampler, DescriptorCount = count };
+            var poolInfo = new DescriptorPoolCreateInfo
+            {
+                SType = StructureType.DescriptorPoolCreateInfo,
+                MaxSets = count,
+                PoolSizeCount = 1,
+                PPoolSizes = &poolSize,
+            };
+            Check(vk.CreateDescriptorPool(device, in poolInfo, null, out mesh.DescriptorPool), "vkCreateDescriptorPool");
+            var layouts = new DescriptorSetLayout[count];
+            Array.Fill(layouts, descriptorSetLayout);
+            mesh.DescriptorSets = new DescriptorSet[count];
+            fixed (DescriptorSetLayout* pLayouts = layouts)
+            fixed (DescriptorSet* pSets = mesh.DescriptorSets)
+            {
+                var allocInfo = new DescriptorSetAllocateInfo
+                {
+                    SType = StructureType.DescriptorSetAllocateInfo,
+                    DescriptorPool = mesh.DescriptorPool,
+                    DescriptorSetCount = count,
+                    PSetLayouts = pLayouts,
+                };
+                Check(vk.AllocateDescriptorSets(device, in allocInfo, pSets), "vkAllocateDescriptorSets");
+            }
+            for (int i = 0; i < count; i++)
+            {
+                var imageInfo = new DescriptorImageInfo
+                {
+                    Sampler = sampler,
+                    ImageView = i < mesh.TextureViews.Length ? mesh.TextureViews[i] : whiteView,
+                    ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
+                };
+                var write = new WriteDescriptorSet
+                {
+                    SType = StructureType.WriteDescriptorSet,
+                    DstSet = mesh.DescriptorSets[i],
+                    DstBinding = 0,
+                    DescriptorCount = 1,
+                    DescriptorType = DescriptorType.CombinedImageSampler,
+                    PImageInfo = &imageInfo,
+                };
+                vk.UpdateDescriptorSets(device, 1, in write, 0, null);
+            }
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Uploads a mesh with its textures. Triangles with out of range indices are dropped.
+        /// <paramref name="ranges"/> select the texture of each part of <paramref name="indices"/> (-1 = untextured).
+        /// </summary>
+        public VulkanMesh Upload(Vector3[] vertices, Vector3[] normals, Vector2[] uvs, int[] indices, DrawRange[] ranges, PreviewTexture[] textures)
+        {
+            var vertexData = new float[Math.Max(1, vertices.Length) * VertexFloats];
             for (int i = 0; i < vertices.Length; i++)
             {
                 var v = vertices[i];
                 var n = normals != null && i < normals.Length ? normals[i] : Vector3.Zero;
-                vertexData[i * 6] = v.X; vertexData[i * 6 + 1] = v.Y; vertexData[i * 6 + 2] = v.Z;
-                vertexData[i * 6 + 3] = n.X; vertexData[i * 6 + 4] = n.Y; vertexData[i * 6 + 5] = n.Z;
+                var uv = uvs != null && i < uvs.Length ? uvs[i] : Vector2.Zero;
+                var o = i * VertexFloats;
+                vertexData[o] = v.X; vertexData[o + 1] = v.Y; vertexData[o + 2] = v.Z;
+                vertexData[o + 3] = n.X; vertexData[o + 4] = n.Y; vertexData[o + 5] = n.Z;
+                vertexData[o + 6] = uv.X; vertexData[o + 7] = uv.Y;
             }
             var triangles = new uint[indices.Length / 3 * 3];
             var edges = new uint[triangles.Length * 2];
+            var mesh = new VulkanMesh { Owner = this, HasNormals = normals != null };
             int t = 0;
-            for (int i = 0; i + 2 < indices.Length; i += 3)
+            foreach (var range in ranges)
             {
-                int i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
-                if ((uint)i0 >= vertices.Length || (uint)i1 >= vertices.Length || (uint)i2 >= vertices.Length)
-                    continue;
-                triangles[t] = (uint)i0; triangles[t + 1] = (uint)i1; triangles[t + 2] = (uint)i2;
-                var e = t * 2;
-                edges[e] = (uint)i0; edges[e + 1] = (uint)i1;
-                edges[e + 2] = (uint)i1; edges[e + 3] = (uint)i2;
-                edges[e + 4] = (uint)i2; edges[e + 5] = (uint)i0;
-                t += 3;
+                var first = t;
+                for (int i = range.Start; i + 2 < range.Start + range.Count && i + 2 < indices.Length; i += 3)
+                {
+                    int i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+                    if ((uint)i0 >= vertices.Length || (uint)i1 >= vertices.Length || (uint)i2 >= vertices.Length)
+                        continue;
+                    triangles[t] = (uint)i0; triangles[t + 1] = (uint)i1; triangles[t + 2] = (uint)i2;
+                    var e = t * 2;
+                    edges[e] = (uint)i0; edges[e + 1] = (uint)i1;
+                    edges[e + 2] = (uint)i1; edges[e + 3] = (uint)i2;
+                    edges[e + 4] = (uint)i2; edges[e + 5] = (uint)i0;
+                    t += 3;
+                }
+                if (t > first)
+                    mesh.Draws.Add(((uint)first, (uint)(t - first), range.Texture >= 0 && range.Texture < textures.Length ? range.Texture : textures.Length));
             }
-
-            var mesh = new VulkanMesh { Owner = this, IndexCount = (uint)t, EdgeCount = (uint)t * 2, HasNormals = normals != null };
+            mesh.IndexCount = (uint)t;
+            mesh.EdgeCount = (uint)t * 2;
             try
             {
                 CreateBuffer<float>(vertexData, BufferUsageFlags.VertexBufferBit, out mesh.VertexBuffer, out mesh.VertexMemory);
                 CreateBuffer<uint>(triangles.AsSpan(0, Math.Max(1, t)), BufferUsageFlags.IndexBufferBit, out mesh.IndexBuffer, out mesh.IndexMemory);
                 CreateBuffer<uint>(edges.AsSpan(0, Math.Max(2, t * 2)), BufferUsageFlags.IndexBufferBit, out mesh.EdgeBuffer, out mesh.EdgeMemory);
+                mesh.TextureImages = new VkImage[textures.Length];
+                mesh.TextureMemories = new DeviceMemory[textures.Length];
+                mesh.TextureViews = new ImageView[textures.Length];
+                for (int i = 0; i < textures.Length; i++)
+                {
+                    UploadTexture(textures[i], out mesh.TextureImages[i], out mesh.TextureMemories[i], out mesh.TextureViews[i]);
+                }
+                CreateDescriptorSets(mesh);
             }
             catch
             {
@@ -719,6 +976,13 @@ namespace AssetStudio.Avalonia
             DestroyBuffer(ref mesh.VertexBuffer, ref mesh.VertexMemory);
             DestroyBuffer(ref mesh.IndexBuffer, ref mesh.IndexMemory);
             DestroyBuffer(ref mesh.EdgeBuffer, ref mesh.EdgeMemory);
+            for (int i = 0; i < mesh.TextureImages.Length; i++)
+            {
+                DestroyImage(ref mesh.TextureImages[i], ref mesh.TextureMemories[i], ref mesh.TextureViews[i]);
+            }
+            if (mesh.DescriptorPool.Handle != 0)
+                vk.DestroyDescriptorPool(device, mesh.DescriptorPool, null); // frees the sets
+            mesh.DescriptorPool = default;
         }
 
         /// <summary>
@@ -774,7 +1038,8 @@ namespace AssetStudio.Avalonia
                 push[28] = wireframeMode == 2 ? 0.85f : 0.16f;
                 push[29] = wireframeMode == 2 ? 0.87f : 0.16f;
                 push[30] = wireframeMode == 2 ? 0.9f : 0.18f;
-                push[31] = mesh.HasNormals ? 1f : 0f;
+                var normalsFlag = mesh.HasNormals ? 1f : 0f;
+                push[31] = normalsFlag;
                 vk.CmdPushConstants(commandBuffer, pipelineLayout, ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit, 0, PushConstantSize, push);
 
                 ulong offset = 0;
@@ -784,7 +1049,15 @@ namespace AssetStudio.Avalonia
                 {
                     vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, fillPipeline);
                     vk.CmdBindIndexBuffer(commandBuffer, mesh.IndexBuffer, 0, IndexType.Uint32);
-                    vk.CmdDrawIndexed(commandBuffer, mesh.IndexCount, 1, 0, 0, 0);
+                    foreach (var draw in mesh.Draws)
+                    {
+                        var set = mesh.DescriptorSets[draw.Set];
+                        vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, pipelineLayout, 0, 1, &set, 0, null);
+                        // flags in color.a: 1 = normals, 2 = textured
+                        var flags = normalsFlag + (draw.Set < mesh.TextureViews.Length ? 2f : 0f);
+                        vk.CmdPushConstants(commandBuffer, pipelineLayout, ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit, PushConstantSize - 4, 4, &flags);
+                        vk.CmdDrawIndexed(commandBuffer, draw.Count, 1, draw.First, 0, 0);
+                    }
                 }
                 if (wireframeMode != 0)
                 {
@@ -849,6 +1122,9 @@ namespace AssetStudio.Avalonia
                         vk.DestroyPipeline(device, pipeline, null);
                 }
                 if (pipelineLayout.Handle != 0) vk.DestroyPipelineLayout(device, pipelineLayout, null);
+                if (descriptorSetLayout.Handle != 0) vk.DestroyDescriptorSetLayout(device, descriptorSetLayout, null);
+                if (sampler.Handle != 0) vk.DestroySampler(device, sampler, null);
+                DestroyImage(ref whiteImage, ref whiteMemory, ref whiteView);
                 if (renderPass.Handle != 0) vk.DestroyRenderPass(device, renderPass, null);
                 if (fence.Handle != 0) vk.DestroyFence(device, fence, null);
                 if (commandPool.Handle != 0) vk.DestroyCommandPool(device, commandPool, null);

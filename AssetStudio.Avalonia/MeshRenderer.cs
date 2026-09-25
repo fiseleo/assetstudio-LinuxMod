@@ -7,6 +7,12 @@ namespace AssetStudio.Avalonia
     using Vector2 = System.Numerics.Vector2;
     using Vector3 = System.Numerics.Vector3;
 
+    /// <summary>A decoded texture for the preview: tightly packed BGRA, top row first.</summary>
+    public sealed record PreviewTexture(byte[] Bgra, int Width, int Height);
+
+    /// <summary>A range of the index list (whole triangles) drawn with one texture (-1 = untextured).</summary>
+    public readonly record struct DrawRange(int Start, int Count, int Texture);
+
     /// <summary>
     /// Mesh / model preview (replaces the OpenTK GLControl of the Windows GUI). Renders on the GPU with Vulkan
     /// (<see cref="VulkanMeshRenderer"/>) when available, otherwise with a small software rasterizer
@@ -17,6 +23,9 @@ namespace AssetStudio.Avalonia
         private readonly Vector3[] vertices;
         private readonly Vector3[] normals;
         private readonly int[] indices;
+        private readonly Vector2[] uvs;
+        private readonly DrawRange[] ranges;
+        private readonly PreviewTexture[] textures;
         private VulkanMesh gpuMesh;
         private readonly Vector3 center;
         private readonly float radius;
@@ -30,15 +39,20 @@ namespace AssetStudio.Avalonia
 
         public int VertexCount => vertices.Length;
         public int TriangleCount => indices.Length / 3;
+        public int TextureCount => textures.Length;
 
         /// <summary>"Vulkan (device)" or "Software", for the status bar.</summary>
         public string BackendName => VulkanMeshRenderer.Instance is { } gpu ? $"Vulkan ({gpu.DeviceName})" : "Software";
 
-        public MeshRenderer(Vector3[] vertices, Vector3[] normals, int[] indices)
+        public MeshRenderer(Vector3[] vertices, Vector3[] normals, int[] indices,
+            Vector2[] uvs = null, DrawRange[] ranges = null, PreviewTexture[] textures = null)
         {
             this.vertices = vertices;
             this.normals = normals;
             this.indices = indices;
+            this.textures = uvs != null && textures != null ? textures : Array.Empty<PreviewTexture>();
+            this.uvs = this.textures.Length > 0 ? uvs : null;
+            this.ranges = this.textures.Length > 0 && ranges != null ? ranges : new[] { new DrawRange(0, indices.Length / 3 * 3, -1) };
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
             foreach (var v in vertices)
@@ -82,7 +96,8 @@ namespace AssetStudio.Avalonia
             return new MeshRenderer(verts, norms, idx);
         }
 
-        public static MeshRenderer FromModel(ModelConverter model)
+        /// <param name="maxTextureSize">textures are scaled down to this size (preview memory)</param>
+        public static MeshRenderer FromModel(ModelConverter model, int maxTextureSize = 2048)
         {
             if (model.MeshList.Count == 0)
                 return null;
@@ -92,35 +107,102 @@ namespace AssetStudio.Avalonia
             var verts = new Vector3[vertexCount];
             // meshes without normals keep zero normals, the GPU shader falls back to flat shading for those
             var norms = new Vector3[vertexCount];
+            var uvs = new Vector2[vertexCount];
+            var uvDone = new bool[vertexCount];
             var hasNormals = false;
             var indices = new System.Collections.Generic.List<int>();
+            var ranges = new System.Collections.Generic.List<DrawRange>();
+            var textures = new System.Collections.Generic.List<PreviewTexture>();
+            var textureIndex = new System.Collections.Generic.Dictionary<string, int>();
             int offset = 0;
             foreach (var mesh in model.MeshList)
             {
+                // the UV set mapped to the diffuse map (Export options > UVs), else the first one
+                var uvSet = -1;
+                for (int i = 0; i < mesh.hasUV.Length; i++)
+                {
+                    if (mesh.hasUV[i] && (uvSet < 0 || (mesh.uvType[i] == 0 && mesh.uvType[uvSet] != 0)))
+                        uvSet = i;
+                }
                 for (int i = 0; i < mesh.VertexList.Count; i++)
                 {
-                    var p = mesh.VertexList[i].Vertex;
+                    var vertex = mesh.VertexList[i];
+                    var p = vertex.Vertex;
                     verts[offset + i] = new Vector3(p.X, p.Y, p.Z);
                     if (mesh.hasNormal)
                     {
-                        var n = mesh.VertexList[i].Normal;
+                        var n = vertex.Normal;
                         norms[offset + i] = new Vector3(n.X, n.Y, n.Z);
+                    }
+                    if (uvSet >= 0 && vertex.UV?[uvSet] is { Length: >= 2 } uv)
+                    {
+                        uvs[offset + i] = new Vector2(uv[0], uv[1]);
                     }
                 }
                 foreach (var submesh in mesh.SubmeshList)
                 {
+                    var start = indices.Count;
+                    var (texture, uvScale, uvOffset) = uvSet >= 0 ? FindMainTexture(model, submesh.Material, textures, textureIndex, maxTextureSize) : (-1, Vector2.One, Vector2.Zero);
                     foreach (var face in submesh.FaceList)
                     {
                         foreach (var index in face.VertexIndices)
                         {
-                            indices.Add(submesh.BaseVertex + index + offset);
+                            var vertex = submesh.BaseVertex + index + offset;
+                            indices.Add(vertex);
+                            // material tiling / offset (vertices are rarely shared between materials)
+                            if (texture >= 0 && (uint)vertex < (uint)vertexCount && !uvDone[vertex])
+                            {
+                                uvDone[vertex] = true;
+                                uvs[vertex] = uvs[vertex] * uvScale + uvOffset;
+                            }
                         }
                     }
+                    var count = (indices.Count - start) / 3 * 3;
+                    if (count > 0)
+                        ranges.Add(new DrawRange(start, count, texture));
                 }
                 hasNormals |= mesh.hasNormal;
                 offset += mesh.VertexList.Count;
             }
-            return new MeshRenderer(verts, hasNormals ? norms : null, indices.ToArray());
+            return new MeshRenderer(verts, hasNormals ? norms : null, indices.ToArray(), uvs, ranges.ToArray(), textures.ToArray());
+        }
+
+        private static (int, Vector2, Vector2) FindMainTexture(ModelConverter model, string materialName,
+            System.Collections.Generic.List<PreviewTexture> textures, System.Collections.Generic.Dictionary<string, int> textureIndex, int maxTextureSize)
+        {
+            var material = materialName == null ? null : ImportedHelpers.FindMaterial(materialName, model.MaterialList);
+            var main = material?.Textures?.Find(x => x.Dest == 0);
+            if (main?.Name == null)
+                return (-1, Vector2.One, Vector2.Zero);
+            if (!textureIndex.TryGetValue(main.Name, out var index))
+            {
+                index = -1;
+                var data = ImportedHelpers.FindTexture(main.Name, model.TextureList)?.Data;
+                if (data != null)
+                {
+                    try
+                    {
+                        using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Bgra32>(data);
+                        if (image.Width > maxTextureSize || image.Height > maxTextureSize)
+                        {
+                            var scale = (float)maxTextureSize / Math.Max(image.Width, image.Height);
+                            SixLabors.ImageSharp.Processing.ProcessingExtensions.Mutate(image, x => SixLabors.ImageSharp.Processing.ResizeExtensions.Resize(x,
+                                Math.Max(1, (int)(image.Width * scale)), Math.Max(1, (int)(image.Height * scale))));
+                        }
+                        var pixels = new byte[image.Width * image.Height * 4];
+                        image.CopyPixelDataTo(pixels);
+                        index = textures.Count;
+                        textures.Add(new PreviewTexture(pixels, image.Width, image.Height));
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Warning($"Model preview: unable to decode texture {main.Name}: {e.Message}");
+                    }
+                }
+                textureIndex[main.Name] = index;
+            }
+            var uvScale = main.Scale.X == 0 && main.Scale.Y == 0 ? Vector2.One : new Vector2(main.Scale.X, main.Scale.Y);
+            return (index, uvScale, new Vector2(main.Offset.X, main.Offset.Y));
         }
 
         /// <summary>Renders into a BGRA (premultiplied, opaque) buffer.</summary>
@@ -131,7 +213,7 @@ namespace AssetStudio.Avalonia
             {
                 try
                 {
-                    gpuMesh ??= gpu.Upload(vertices, normals, indices);
+                    gpuMesh ??= gpu.Upload(vertices, normals, uvs, indices, ranges, textures);
                     var (mvp, view) = Camera(width, height);
                     return gpu.Render(gpuMesh, width, height, mvp, view, WireframeMode);
                 }
@@ -196,23 +278,33 @@ namespace AssetStudio.Avalonia
             var light = Vector3.Normalize(new Vector3(0.3f, 0.5f, 1f));
             if (WireframeMode != 2)
             {
-                for (int t = 0; t + 2 < indices.Length; t += 3)
+                foreach (var range in ranges)
                 {
-                    int i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
-                    if ((uint)i0 >= projected.Length || (uint)i1 >= projected.Length || (uint)i2 >= projected.Length)
-                        continue;
-                    var w0 = Vector3.Transform(vertices[i0] - center, rotation);
-                    var w1 = Vector3.Transform(vertices[i1] - center, rotation);
-                    var w2 = Vector3.Transform(vertices[i2] - center, rotation);
-                    var n = Vector3.Cross(w1 - w0, w2 - w0);
-                    var len = n.Length();
-                    if (len <= 0 || !float.IsFinite(len))
-                        continue;
-                    n /= len;
-                    var intensity = 0.4f + 0.6f * MathF.Abs(Vector3.Dot(n, light));
-                    var shade = (byte)Math.Clamp(intensity * 235, 0, 255);
-                    FillTriangle(pixels, depth, width, height, projected[i0], projected[i1], projected[i2],
-                        (byte)(shade * 0.95f), (byte)(shade * 0.92f), shade);
+                    var texture = range.Texture >= 0 ? textures[range.Texture] : null;
+                    for (int t = range.Start; t + 2 < range.Start + range.Count; t += 3)
+                    {
+                        int i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
+                        if ((uint)i0 >= projected.Length || (uint)i1 >= projected.Length || (uint)i2 >= projected.Length)
+                            continue;
+                        var w0 = Vector3.Transform(vertices[i0] - center, rotation);
+                        var w1 = Vector3.Transform(vertices[i1] - center, rotation);
+                        var w2 = Vector3.Transform(vertices[i2] - center, rotation);
+                        var n = Vector3.Cross(w1 - w0, w2 - w0);
+                        var len = n.Length();
+                        if (len <= 0 || !float.IsFinite(len))
+                            continue;
+                        n /= len;
+                        var intensity = 0.4f + 0.6f * MathF.Abs(Vector3.Dot(n, light));
+                        if (texture != null)
+                        {
+                            FillTriangle(pixels, depth, width, height, projected[i0], projected[i1], projected[i2], 0, 0, 0,
+                                texture, uvs[i0], uvs[i1], uvs[i2], intensity);
+                            continue;
+                        }
+                        var shade = (byte)Math.Clamp(intensity * 235, 0, 255);
+                        FillTriangle(pixels, depth, width, height, projected[i0], projected[i1], projected[i2],
+                            (byte)(shade * 0.95f), (byte)(shade * 0.92f), shade);
+                    }
                 }
             }
             if (WireframeMode != 0)
@@ -230,7 +322,9 @@ namespace AssetStudio.Avalonia
             return pixels;
         }
 
-        private static void FillTriangle(byte[] pixels, float[] depth, int width, int height, Vector3 a, Vector3 b, Vector3 c, byte blue, byte green, byte red)
+        /// <summary>Flat colored, or textured (nearest texel, shaded by <paramref name="intensity"/>) when <paramref name="texture"/> is set.</summary>
+        private static void FillTriangle(byte[] pixels, float[] depth, int width, int height, Vector3 a, Vector3 b, Vector3 c, byte blue, byte green, byte red,
+            PreviewTexture texture = null, Vector2 uvA = default, Vector2 uvB = default, Vector2 uvC = default, float intensity = 1)
         {
             var minX = (int)MathF.Max(0, MathF.Floor(MathF.Min(a.X, MathF.Min(b.X, c.X))));
             var maxX = (int)MathF.Min(width - 1, MathF.Ceiling(MathF.Max(a.X, MathF.Max(b.X, c.X))));
@@ -259,6 +353,21 @@ namespace AssetStudio.Avalonia
                         continue;
                     depth[i] = z;
                     var o = i * 4;
+                    if (texture != null)
+                    {
+                        // orthographic projection: affine interpolation is exact; repeat wrapping, V flipped (image rows go down)
+                        var uv = uvA * w0 + uvB * w1 + uvC * w2;
+                        var tu = uv.X - MathF.Floor(uv.X);
+                        var tv = 1 - (uv.Y - MathF.Floor(uv.Y));
+                        var tx = Math.Clamp((int)(tu * texture.Width), 0, texture.Width - 1);
+                        var ty = Math.Clamp((int)(tv * texture.Height), 0, texture.Height - 1);
+                        var s = (ty * texture.Width + tx) * 4;
+                        pixels[o] = (byte)Math.Min(255, texture.Bgra[s] * intensity);
+                        pixels[o + 1] = (byte)Math.Min(255, texture.Bgra[s + 1] * intensity);
+                        pixels[o + 2] = (byte)Math.Min(255, texture.Bgra[s + 2] * intensity);
+                        pixels[o + 3] = 255;
+                        continue;
+                    }
                     pixels[o] = blue; pixels[o + 1] = green; pixels[o + 2] = red; pixels[o + 3] = 255;
                 }
             }
