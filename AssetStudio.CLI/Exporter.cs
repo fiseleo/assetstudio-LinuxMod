@@ -4,6 +4,8 @@ using Newtonsoft.Json.Converters;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using AssetStudio.PInvoke;
 using System.Text;
 
 namespace AssetStudio.CLI
@@ -467,7 +469,10 @@ namespace AssetStudio.CLI
             catch (TypeInitializationException e) when (e.InnerException is DllNotFoundException)
             {
                 var library = OperatingSystem.IsWindows() ? "AssetStudio.FBXNative.dll" : OperatingSystem.IsMacOS() ? "libAssetStudio.FBXNative.dylib" : "libAssetStudio.FBXNative.so";
-                throw new NotSupportedException($"FBX export needs the native library {library} in the x64 folder next to the executable.", e);
+                var message = $"FBX export needs the native library {library} in the {DllLoader.PlatformFolder} folder next to the executable.";
+                if (OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture != Architecture.X64)
+                    message += " The Autodesk FBX SDK only exists for x86-64 Linux, so FBX export is not available on this architecture.";
+                throw new NotSupportedException(message, e);
             }
         }
 

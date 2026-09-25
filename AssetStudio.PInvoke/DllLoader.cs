@@ -25,15 +25,21 @@ namespace AssetStudio.PInvoke
             }
         }
 
+        /// <summary>Name of the folder next to the executable that holds the native libraries (x86, x64 or arm64).</summary>
+        public static string PlatformFolder => RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X86 => "x86",
+            Architecture.Arm64 => "arm64",
+            _ => "x64",
+        };
+
         private static string GetDirectedDllDirectory()
         {
             // AppContext.BaseDirectory is the application folder even when started through `dotnet app.dll`,
             // where the main module would be the dotnet host instead.
             var localDir = AppContext.BaseDirectory;
 
-            var subDir = Environment.Is64BitProcess ? "x64" : "x86";
-
-            var directedDllDir = Path.Combine(localDir, subDir);
+            var directedDllDir = Path.Combine(localDir, PlatformFolder);
 
             return directedDllDir;
         }

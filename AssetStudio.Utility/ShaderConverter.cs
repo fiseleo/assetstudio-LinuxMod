@@ -1191,7 +1191,7 @@ namespace AssetStudio
         {
             if (!Vkd3dShader.IsAvailable)
             {
-                sb.Append("// DirectX shader: vkd3d-shader library (x64/libvkd3d-shader.so) not found, unable to convert to Vulkan SPIR-V\n");
+                sb.Append($"// DirectX shader: vkd3d-shader library ({DllLoader.PlatformFolder}/libvkd3d-shader.so) not found, unable to convert to Vulkan SPIR-V\n");
                 return;
             }
             try
