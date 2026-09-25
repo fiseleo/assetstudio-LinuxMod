@@ -711,11 +711,21 @@ namespace AssetStudio
                 var m_ColliderType = reader.ReadInt32();
             }
 
-            int m_MeshUsageFlags = reader.ReadInt32();
+            if (!reader.IsVersionAtLeast(6000, 6, 0, 'a', 5)) //removed in 6000.6.0a5
+            {
+                int m_MeshUsageFlags = reader.ReadInt32();
+            }
 
             if (version[0] > 2022 || (version[0] == 2022 && version[1] >= 1)) //2022.1 and up
             {
                 int m_CookingOptions = reader.ReadInt32();
+            }
+
+            if (reader.IsVersionAtLeast(6000, 6, 0, 'a', 5)) //6000.6.0a5 and up
+            {
+                var m_PreBakeConvexCollisionMesh = reader.ReadBoolean();
+                var m_PreBakeTriangleCollisionMesh = reader.ReadBoolean();
+                reader.AlignStream();
             }
 
             if (version[0] >= 5) //5.0 and up

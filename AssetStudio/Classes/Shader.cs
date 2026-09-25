@@ -49,10 +49,25 @@ namespace AssetStudio
         public uint sampler;
         public int bindPoint;
 
-        public SamplerParameter(EndianBinaryReader reader)
+        public SamplerParameter(ObjectReader reader)
         {
             sampler = reader.ReadUInt32();
-            bindPoint = reader.ReadInt32();
+            bindPoint = ShaderBinding.Read(reader);
+        }
+    }
+
+    /// <summary>
+    /// 6000.6.0a2 and up store resource bindings as a Binding struct (set / encoded data + slot) instead of an index.
+    /// </summary>
+    public static class ShaderBinding
+    {
+        /// <returns>the index, or the slot of the Binding</returns>
+        public static int Read(ObjectReader reader)
+        {
+            if (!reader.IsVersionAtLeast(6000, 6, 0, 'a', 2))
+                return reader.ReadInt32();
+            reader.ReadUInt32(); // m_Set / m_EncodedData
+            return (int)reader.ReadUInt32(); // m_Slot
         }
     }
     public enum TextureDimension
@@ -381,8 +396,8 @@ namespace AssetStudio
             var version = reader.version;
 
             m_NameIndex = reader.ReadInt32();
-            m_Index = reader.ReadInt32();
-            m_SamplerIndex = reader.ReadInt32();
+            m_Index = ShaderBinding.Read(reader);
+            m_SamplerIndex = ShaderBinding.Read(reader);
             if (version[0] > 2017 || (version[0] == 2017 && version[1] >= 3)) //2017.3 and up
             {
                 var m_MultiSampled = reader.ReadBoolean();
@@ -403,10 +418,14 @@ namespace AssetStudio
             var version = reader.version;
 
             m_NameIndex = reader.ReadInt32();
-            m_Index = reader.ReadInt32();
+            m_Index = ShaderBinding.Read(reader);
             if (version[0] >= 2020) //2020.1 and up
             {
                 m_ArraySize = reader.ReadInt32();
+            }
+            if (reader.IsVersionAtLeast(6000, 6, 0, 'a', 7)) //6000.6.0a7 and up
+            {
+                var m_ResourceType = reader.ReadInt32();
             }
         }
     }
@@ -468,11 +487,11 @@ namespace AssetStudio
         public int m_Index;
         public int m_OriginalIndex;
 
-        public UAVParameter(EndianBinaryReader reader)
+        public UAVParameter(ObjectReader reader)
         {
             m_NameIndex = reader.ReadInt32();
-            m_Index = reader.ReadInt32();
-            m_OriginalIndex = reader.ReadInt32();
+            m_Index = ShaderBinding.Read(reader);
+            m_OriginalIndex = ShaderBinding.Read(reader);
         }
     }
 
@@ -526,18 +545,29 @@ namespace AssetStudio
 
         public SerializedProgramParameters(ObjectReader reader)
         {
-            int numVectorParams = reader.ReadInt32();
             m_VectorParams = new List<VectorParameter>();
-            for (int i = 0; i < numVectorParams; i++)
-            {
-                m_VectorParams.Add(new VectorParameter(reader));
-            }
-
-            int numMatrixParams = reader.ReadInt32();
             m_MatrixParams = new List<MatrixParameter>();
-            for (int i = 0; i < numMatrixParams; i++)
+            if (reader.IsVersionAtLeast(6000, 7, 0, 'a', 2)) //6000.7.0a2 and up: specialization constants replace the vector / matrix parameters
             {
-                m_MatrixParams.Add(new MatrixParameter(reader));
+                int numSpecializationConstantParams = reader.ReadInt32();
+                for (int i = 0; i < numSpecializationConstantParams; i++)
+                {
+                    var m_NameIndex = reader.ReadInt32();
+                    ShaderBinding.Read(reader);
+                }
+            }
+            else
+            {
+                int numVectorParams = reader.ReadInt32();
+                for (int i = 0; i < numVectorParams; i++)
+                {
+                    m_VectorParams.Add(new VectorParameter(reader));
+                }
+                int numMatrixParams = reader.ReadInt32();
+                for (int i = 0; i < numMatrixParams; i++)
+                {
+                    m_MatrixParams.Add(new MatrixParameter(reader));
+                }
             }
 
             int numTextureParams = reader.ReadInt32();
@@ -858,7 +888,7 @@ namespace AssetStudio
         {
             var version = reader.version;
 
-            if ((version[0] > 2020 || (version[0] == 2020 && version[1] >= 2)) && version[0] < 6000) //2020.2 ~ 2023.x (not serialized in Unity 6)
+            if ((version[0] > 2020 || (version[0] == 2020 && version[1] >= 2)) && !reader.IsVersionAtLeast(2023, 1, 0, 'a', 9)) //2020.2 ~ 2023.1.0a8
             {
                 int numEditorDataHash = reader.ReadInt32();
                 m_EditorDataHash = new List<Hash128>();
@@ -910,6 +940,11 @@ namespace AssetStudio
             if (version[0] == 2021 && version[1] >= 2) //2021.2 ~2021.x
             {
                 m_SerializedKeywordStateMask = reader.ReadUInt16Array();
+                reader.AlignStream();
+            }
+            if (reader.IsVersionAtLeast(6000, 7, 0, 'a', 3)) //6000.7.0a3 and up
+            {
+                var m_SerializedDynamicBranchKeywordMask = reader.ReadUInt16Array();
                 reader.AlignStream();
             }
         }

@@ -833,7 +833,8 @@ namespace AssetStudio
                 case ShaderCompilerPlatform.Vulkan:
                     return programType == ShaderGpuProgramType.SPIRV;
                 default:
-                    throw new NotSupportedException();
+                    // platforms added after this list (e.g. platform 28 in 6000.7) are skipped
+                    return false;
             }
         }
 

@@ -153,6 +153,12 @@ namespace AssetStudio
                         m_SourceSkin[i] = new BoneWeights4(reader);
                     }
                 }
+
+                if (reader.IsVersionAtLeast(6000, 5, 0, 'a', 7)) //6000.5.0a7 and up
+                {
+                    var m_BlendShapes = new BlendShapeData(reader);
+                    reader.AlignStream();
+                }
             }
 
             textureRect = new Rectf(reader);
@@ -225,7 +231,11 @@ namespace AssetStudio
             }
 
             m_Extrude = reader.ReadUInt32();
-            if (version[0] > 5 || (version[0] == 5 && version[1] >= 3)) //5.3 and up
+            if (reader.IsVersionAtLeast(6000, 5, 0, 'a', 3)) //6000.5.0a3 and up: no m_IsPolygon
+            {
+                reader.AlignStream();
+            }
+            else if (version[0] > 5 || (version[0] == 5 && version[1] >= 3)) //5.3 and up
             {
                 m_IsPolygon = reader.ReadBoolean();
                 reader.AlignStream();

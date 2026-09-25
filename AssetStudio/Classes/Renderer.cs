@@ -116,11 +116,26 @@ namespace AssetStudio
                     {
                         var m_RayTraceProcedural = reader.ReadByte();
                     }
+                    if (reader.IsVersionAtLeast(2023, 2, 0, 'a', 13)) //2023.2.0a13 and up
+                    {
+                        var m_RayTracingAccelStructBuildFlagsOverride = reader.ReadByte();
+                        var m_RayTracingAccelStructBuildFlags = reader.ReadByte();
+                    }
+                    if (reader.IsVersionAtLeast(2023, 3, 0, 'a', 16)) //2023.3.0a16 (Unity 6) and up
+                    {
+                        var m_SmallMeshCulling = reader.ReadByte();
+                    }
                     if (reader.Game.Type.IsGI() || reader.Game.Type.IsGICB3() || reader.Game.Type.IsGICB3Pre())
                     {
                         var m_MeshShowQuality = reader.ReadByte();
                     }
                     reader.AlignStream();
+                    if (reader.IsVersionAtLeast(6000, 2, 0, 'a', 8)) //6000.2.0a8 and up
+                    {
+                        var m_ForceMeshLod = reader.ReadInt16();
+                        reader.AlignStream();
+                        var m_MeshLodSelectionBias = reader.ReadSingle();
+                    }
                 }
                 else
                 {
@@ -239,6 +254,11 @@ namespace AssetStudio
                     var RenderFlag = reader.ReadUInt32();
                     reader.AlignStream();
                 }
+            }
+
+            if (reader.IsVersionAtLeast(6000, 3, 0, 'a', 5)) //6000.3.0a5 and up
+            {
+                var m_MaskInteraction = reader.ReadInt32();
             }
         }
 

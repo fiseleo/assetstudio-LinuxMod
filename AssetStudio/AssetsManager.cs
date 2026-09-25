@@ -1086,6 +1086,26 @@ namespace AssetStudio
                     }
                 }
             }
+
+            // 6000.6.0a3 and up: atlases no longer list their sprites, match them by render data key instead
+            var atlasesByKey = new Dictionary<KeyValuePair<Guid, long>, SpriteAtlas>();
+            foreach (var atlas in assetsFileList.SelectMany(x => x.Objects).OfType<SpriteAtlas>().Where(x => x.m_PackedSprites.Count == 0 && !x.m_IsVariant))
+            {
+                foreach (var key in atlas.m_RenderDataMap.Keys)
+                {
+                    atlasesByKey.TryAdd(key, atlas);
+                }
+            }
+            if (atlasesByKey.Count > 0)
+            {
+                foreach (var sprite in assetsFileList.SelectMany(x => x.Objects).OfType<Sprite>().Where(x => x.m_SpriteAtlas?.IsNull == true))
+                {
+                    if (atlasesByKey.TryGetValue(sprite.m_RenderDataKey, out var atlas))
+                    {
+                        sprite.m_SpriteAtlas.Set(atlas);
+                    }
+                }
+            }
         }
     }
 }

@@ -128,3 +128,33 @@ Export: player builds of 2021.3.10+ / 2022.1.13+ / Unity 6 keep the subprograms 
 (`m_SubPrograms` is empty), which the converter ignored, so their shaders had no programs. They are exported now.
 The compressed blob of these versions also holds parameter entries (referenced by `m_ParameterBlobIndices`),
 which are skipped instead of being parsed as programs.
+
+## Unity 2023.1 – 6000.7 class layouts (Linux port, 2026-09)
+
+Each change was located with the release type trees of every Unity version in
+[AssetRipper/TypeTreeDumps](https://github.com/AssetRipper/TypeTreeDumps) (bisected to the exact alpha/beta), and
+checked against real files with type trees by comparing the manual parsers with the type tree values (UnityDataTools
+test data: 2019.4, 2022.1, 2023.1.0a16, 6000.0.65, 6000.6.0b3, 6000.7.0b2 players and bundles).
+`ObjectReader.IsVersionAtLeast` compares the full version including the release stage, since several layouts changed
+in the middle of an alpha cycle.
+
+| Since | Class | Change |
+|-------|-------|--------|
+| 2023.1.0a9 | Shader | `SerializedPass.m_EditorDataHash` / `m_Platforms` removed |
+| 2023.2.0a13 | Renderer | `m_RayTracingAccelStructBuildFlagsOverride`, `m_RayTracingAccelStructBuildFlags` |
+| 2023.3.0a16 (6000.0) | Renderer | `m_SmallMeshCulling` |
+| 6000.2.0a8 | Renderer | `m_ForceMeshLod`, `m_MeshLodSelectionBias` (Mesh `m_MeshLodInfo` at the end, not read) |
+| 6000.2.0b2 | AnimatorController | `ValueArray.m_EntityIdValues` |
+| 6000.3.0a5 | Renderer | `m_MaskInteraction` |
+| 6000.4.0a2 | AnimatorController | `m_EvaluateTransitionsOnStart` |
+| 6000.5.0a3 | Sprite | `m_IsPolygon` removed |
+| 6000.5.0a7 | Sprite / AnimationClip | `SpriteRenderData.m_BlendShapes`; `GenericBinding.metaData` |
+| 6000.6.0a2 | Shader | parameter indices became `Binding` structs (8 bytes) |
+| 6000.6.0a3 | SpriteAtlas | `m_PackedSprites` / `m_PackedSpriteNamesToIndex` removed, `SpriteAtlasData.spriteInstanceData` added; sprites are matched to atlases by render data key |
+| 6000.6.0a5 | Mesh | `m_MeshUsageFlags` replaced by `m_PreBake*CollisionMesh` |
+| 6000.6.0a7 | Shader | `BufferBinding.m_ResourceType` |
+| 6000.7.0a2 | Shader | `ProgramParameters.m_SpecializationConstantParams` replaces the vector / matrix parameters |
+| 6000.7.0a3 | Shader | `SerializedPass.m_SerializedDynamicBranchKeywordMask` |
+
+SerializedFile formats: 23 (6000.5, type tree blobs, optionally extracted to a `.typetreedata` file) and 26 (6000.7,
+shared sub trees) are read. Shader platforms newer than the known list (e.g. 28 in 6000.7) are skipped on export.

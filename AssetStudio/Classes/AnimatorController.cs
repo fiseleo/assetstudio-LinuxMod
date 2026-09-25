@@ -549,6 +549,10 @@ namespace AssetStudio
                     m_IntValues = reader.ReadInt32Array();
                     m_BoolValues = reader.ReadBooleanArray();
                     reader.AlignStream();
+                    if (reader.IsVersionAtLeast(6000, 2, 0, 'b', 2)) //6000.2.0b2 and up
+                    {
+                        var m_EntityIdValues = reader.ReadInt32Array();
+                    }
                 }
             }
         }
@@ -589,6 +593,11 @@ namespace AssetStudio
 
         public AnimatorController(ObjectReader reader) : base(reader)
         {
+            if (reader.IsVersionAtLeast(6000, 4, 0, 'a', 2)) //6000.4.0a2 and up
+            {
+                var m_EvaluateTransitionsOnStart = reader.ReadBoolean();
+                reader.AlignStream();
+            }
             var m_ControllerSize = reader.ReadUInt32();
             var m_Controller = new ControllerConstant(reader);
 

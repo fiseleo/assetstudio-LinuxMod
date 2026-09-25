@@ -39,6 +39,48 @@ namespace AssetStudio
                 }
                 reader.AlignStream();
             }
+            if (reader.IsVersionAtLeast(6000, 6, 0, 'a', 3)) //6000.6.0a3 and up
+            {
+                SkipSpriteInstanceData(reader);
+            }
+        }
+
+        /// <summary>The sprite geometry kept by the atlas since 6000.6.0a3 (SpriteInstanceData), not needed for exporting.</summary>
+        private static void SkipSpriteInstanceData(ObjectReader reader)
+        {
+            reader.ReadAlignedString(); // spriteName
+            new Rectf(reader); // rect
+            reader.ReadVector4(); // border
+            reader.ReadVector2(); // pivot
+            reader.ReadSingle(); // pixelsToUnits
+            reader.ReadInt32(); // m_IndexFormat
+            var subMeshCount = reader.ReadInt32();
+            for (int i = 0; i < subMeshCount; i++)
+            {
+                new SubMesh(reader);
+            }
+            reader.AlignStream();
+            reader.ReadUInt8Array(); // m_IndexBuffer
+            reader.AlignStream();
+            new VertexData(reader);
+            reader.ReadMatrixArray(); // m_Bindpose
+            new BlendShapeData(reader);
+            var boneCount = reader.ReadInt32();
+            for (int i = 0; i < boneCount; i++)
+            {
+                reader.ReadAlignedString(); // name
+                reader.ReadAlignedString(); // guid
+                reader.ReadVector3(); // position
+                reader.ReadQuaternion(); // rotation
+                reader.ReadSingle(); // length
+                reader.ReadInt32(); // parentId
+                reader.ReadUInt32(); // color
+            }
+            var physicsShapeCount = reader.ReadInt32();
+            for (int i = 0; i < physicsShapeCount; i++)
+            {
+                reader.ReadVector2Array();
+            }
         }
     }
 
@@ -50,14 +92,17 @@ namespace AssetStudio
 
         public SpriteAtlas(ObjectReader reader) : base(reader)
         {
-            var m_PackedSpritesSize = reader.ReadInt32();
             m_PackedSprites = new List<PPtr<Sprite>>();
-            for (int i = 0; i < m_PackedSpritesSize; i++)
+            if (!reader.IsVersionAtLeast(6000, 6, 0, 'a', 3)) //removed in 6000.6.0a3
             {
-                m_PackedSprites.Add(new PPtr<Sprite>(reader));
-            }
+                var m_PackedSpritesSize = reader.ReadInt32();
+                for (int i = 0; i < m_PackedSpritesSize; i++)
+                {
+                    m_PackedSprites.Add(new PPtr<Sprite>(reader));
+                }
 
-            var m_PackedSpriteNamesToIndex = reader.ReadStringArray();
+                var m_PackedSpriteNamesToIndex = reader.ReadStringArray();
+            }
 
             var m_RenderDataMapSize = reader.ReadInt32();
             m_RenderDataMap = new Dictionary<KeyValuePair<Guid, long>, SpriteAtlasData>();

@@ -1679,7 +1679,12 @@ namespace AssetStudio
             {
                 isIntCurve = reader.ReadByte();
             }
-            reader.AlignStream();
+            reader.AlignStream(); // also skips isSerializeReferenceCurve (2022.2 and up)
+            if (reader.IsVersionAtLeast(6000, 5, 0, 'a', 7)) //6000.5.0a7 and up
+            {
+                var metaData = reader.ReadUInt16();
+                reader.AlignStream();
+            }
         }
 
         public YAMLNode ExportYAML(int[] version)
