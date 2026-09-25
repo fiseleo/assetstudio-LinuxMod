@@ -218,7 +218,9 @@
           <TabItem Header="Preview">
             <Grid x:Name="previewGrid" Focusable="True" Background="Transparent" KeyDown="Preview_KeyDown">
               <!-- checkerboard background for textures -->
-              <Border x:Name="imagePreviewHost" IsVisible="False" ClipToBounds="True">
+              <Border x:Name="imagePreviewHost" IsVisible="False" ClipToBounds="True"
+                      PointerPressed="Image_PointerPressed" PointerMoved="Image_PointerMoved" PointerReleased="Image_PointerReleased"
+                      PointerWheelChanged="Image_PointerWheelChanged" DoubleTapped="Image_DoubleTapped" SizeChanged="Image_SizeChanged">
                 <Border.Background>
                   <VisualBrush TileMode="Tile" SourceRect="0,0,16,16" DestinationRect="0,0,16,16">
                     <VisualBrush.Visual>
@@ -229,7 +231,10 @@
                     </VisualBrush.Visual>
                   </VisualBrush>
                 </Border.Background>
-                <Image x:Name="imagePreview" Stretch="Uniform" StretchDirection="DownOnly" RenderOptions.BitmapInterpolationMode="MediumQuality" />
+                <!-- positioned and sized by code: fit to the view, wheel zoom, drag to pan -->
+                <Canvas>
+                  <Image x:Name="imagePreview" Stretch="Fill" RenderOptions.BitmapInterpolationMode="MediumQuality" />
+                </Canvas>
               </Border>
               <Border x:Name="meshPreviewHost" IsVisible="False" Background="#FF2A3238" ClipToBounds="True" Focusable="True"
                       PointerPressed="Mesh_PointerPressed" PointerMoved="Mesh_PointerMoved" PointerReleased="Mesh_PointerReleased"

@@ -36,7 +36,7 @@ Same layout and menus as the Windows GUI:
 - Load files / folders (menu, drag & drop, or command line arguments), extract bundles
 - Scene Hierarchy (checkboxes, regex search: `Enter` next match, `Shift` all, `Ctrl` check, `Alt` root),
   Asset List (regex filter, column sort, type filter, `Ctrl+A`, context menu), Asset Classes
-- Preview: Texture2D / Sprite (channel toggle `Ctrl+R/G/B/A`), text / shader / MonoBehaviour / AnimationClip,
+- Preview: Texture2D / Sprite (channel toggle `Ctrl+R/G/B/A`; wheel zoom, drag to pan, double-click = fit / 100%), text / shader / MonoBehaviour / AnimationClip,
   fonts, audio info + playback (pause, loop, seek, volume), mesh and model 3D preview (Vulkan GPU renderer, see below: left drag rotate,
   right drag pan, wheel zoom, `Ctrl+W` wireframe), Dump tab
 - Export: Convert / Raw / Dump / JSON for all, selected or filtered assets, asset list XML,

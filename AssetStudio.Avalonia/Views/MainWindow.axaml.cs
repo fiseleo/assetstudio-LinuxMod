@@ -1674,8 +1674,101 @@ namespace AssetStudio.Avalonia.Views
             imageTexture?.Dispose();
             imageTexture = bitmap;
             imagePreviewHost.IsVisible = true;
+            FitImage();
             previewGrid.Focus();
         }
+
+        #region Image zoom / pan
+
+        private double imageScale = 1;
+        private Point imageOffset;
+        private bool imageFit = true;
+        private Point? imageDragStart;
+
+        private Size ImageSize => imageTexture == null ? default : new Size(imageTexture.PixelSize.Width, imageTexture.PixelSize.Height);
+
+        /// <summary>Scale down to fit the view (never up), centered: the default view.</summary>
+        private void FitImage()
+        {
+            var view = imagePreviewHost.Bounds.Size;
+            var image = ImageSize;
+            if (image.Width <= 0 || image.Height <= 0 || view.Width <= 0 || view.Height <= 0)
+                return;
+            imageFit = true;
+            imageScale = Math.Min(1, Math.Min(view.Width / image.Width, view.Height / image.Height));
+            imageOffset = new Point((view.Width - image.Width * imageScale) / 2, (view.Height - image.Height * imageScale) / 2);
+            ApplyImageTransform();
+        }
+
+        private void SetImageScale(double scale, Point anchor)
+        {
+            // keep the image pixel under the anchor (the cursor) in place
+            scale = Math.Clamp(scale, 0.02, 64);
+            imageOffset = anchor - (anchor - imageOffset) * (scale / imageScale);
+            imageScale = scale;
+            imageFit = false;
+            ApplyImageTransform();
+        }
+
+        private void ApplyImageTransform()
+        {
+            var image = ImageSize;
+            imagePreview.Width = image.Width * imageScale;
+            imagePreview.Height = image.Height * imageScale;
+            Canvas.SetLeft(imagePreview, imageOffset.X);
+            Canvas.SetTop(imagePreview, imageOffset.Y);
+            // sharp pixels when magnified, smooth when shrunk
+            global::Avalonia.Media.RenderOptions.SetBitmapInterpolationMode(imagePreview, imageScale > 1 ? BitmapInterpolationMode.None : BitmapInterpolationMode.MediumQuality);
+            StatusStripUpdate($"Zoom {imageScale * 100:0.#}% | Wheel = zoom | Drag = move | Double-click = fit / 100%");
+        }
+
+        private void Image_PointerWheelChanged(object sender, PointerWheelEventArgs e)
+        {
+            if (imageTexture == null)
+                return;
+            SetImageScale(imageScale * Math.Pow(1.2, e.Delta.Y), e.GetPosition(imagePreviewHost));
+            e.Handled = true;
+        }
+
+        private void Image_PointerPressed(object sender, PointerPressedEventArgs e)
+        {
+            imageDragStart = e.GetPosition(imagePreviewHost);
+            e.Pointer.Capture(imagePreviewHost);
+            previewGrid.Focus();
+        }
+
+        private void Image_PointerMoved(object sender, PointerEventArgs e)
+        {
+            if (imageDragStart is not Point start)
+                return;
+            var position = e.GetPosition(imagePreviewHost);
+            imageOffset += position - start;
+            imageDragStart = position;
+            imageFit = false;
+            ApplyImageTransform();
+        }
+
+        private void Image_PointerReleased(object sender, PointerReleasedEventArgs e)
+        {
+            imageDragStart = null;
+            e.Pointer.Capture(null);
+        }
+
+        private void Image_DoubleTapped(object sender, TappedEventArgs e)
+        {
+            if (imageFit)
+                SetImageScale(1, e.GetPosition(imagePreviewHost));
+            else
+                FitImage();
+        }
+
+        private void Image_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (imageFit)
+                FitImage();
+        }
+
+        #endregion
 
         private void PreviewAudioClip(AssetItem assetItem, AudioClip m_AudioClip)
         {
