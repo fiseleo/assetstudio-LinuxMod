@@ -1092,6 +1092,19 @@ namespace AssetStudio
                                 }
                             }
 
+                            // the header size differs between Unity versions (5.3: 5 bytes before DXBC, later: 6),
+                            // so look for the DXBC magic near the expected start
+                            if (!IsDxbcAt(m_ProgramCode, start))
+                            {
+                                for (int i = 0; i < Math.Min(64, m_ProgramCode.Length - 4); i++)
+                                {
+                                    if (IsDxbcAt(m_ProgramCode, i))
+                                    {
+                                        start = i;
+                                        break;
+                                    }
+                                }
+                            }
                             var buffSpan = m_ProgramCode.AsSpan(start);
 
                             sb.Append($"// hash: {ComputeHash64(buffSpan):x8}\n");
@@ -1171,6 +1184,9 @@ namespace AssetStudio
         /// vkd3d-shader and decompile that to Vulkan GLSL with SPIRV-Cross, falling back to the SPIR-V
         /// disassembly and then to vkd3d's Direct3D assembly listing.
         /// </summary>
+        private static bool IsDxbcAt(byte[] code, int offset) =>
+            offset >= 0 && offset + 4 <= code.Length && code[offset] == 'D' && code[offset + 1] == 'X' && code[offset + 2] == 'B' && code[offset + 3] == 'C';
+
         private static void AppendVulkan(StringBuilder sb, ReadOnlySpan<byte> byteCode, Vkd3dShader.SourceType sourceType)
         {
             if (!Vkd3dShader.IsAvailable)
