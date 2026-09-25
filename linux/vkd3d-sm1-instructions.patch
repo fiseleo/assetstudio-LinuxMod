@@ -1,0 +1,391 @@
+--- a/libs/vkd3d-shader/ir.c	2026-08-24 18:08:15.000000000 +0800
++++ b/libs/vkd3d-shader/ir.c	2026-09-26 06:21:52.036388780 +0800
+@@ -3735,6 +3735,354 @@
+     return VKD3D_ERROR_OUT_OF_MEMORY;
+ }
+ 
++/* AssetStudio: SM1-3 instructions without a SPIR-V implementation (lit, dst, crs, sgn, expp, logp),
++ * lowered to plain vsir. The sources are copied to SSA values first, so a destination may alias a source. */
++
++static void sm1_src_ssa_swizzle(struct vsir_src_operand *src, unsigned int id, uint32_t swizzle)
++{
++    vsir_src_operand_init_ssa_f32v4(src, id);
++    src->swizzle = swizzle;
++}
++
++static void sm1_src_ssa_component(struct vsir_src_operand *src, unsigned int id, unsigned int c)
++{
++    sm1_src_ssa_swizzle(src, id, vkd3d_shader_create_swizzle(c, c, c, c));
++}
++
++static void sm1_src_const_vec4(struct vsir_src_operand *src, float value)
++{
++    vsir_src_operand_init(src, VSIR_REGISTER_IMMCONST, VSIR_DATA_F32, 0);
++    src->reg.dimension = VSIR_DIMENSION_VEC4;
++    src->reg.u.immconst_f32[0] = src->reg.u.immconst_f32[1] = value;
++    src->reg.u.immconst_f32[2] = src->reg.u.immconst_f32[3] = value;
++    src->swizzle = VKD3D_SHADER_NO_SWIZZLE;
++}
++
++/* mov srID, SRC (vec4) */
++static bool sm1_save_src(struct vsir_program *program, struct vkd3d_shader_instruction *ins,
++        const struct vkd3d_shader_location *location, const struct vsir_src_operand *src, unsigned int *id)
++{
++    if (!vsir_instruction_init_with_params(program, ins, location, VSIR_OP_MOV, 1, 1))
++        return false;
++    *id = program->ssa_count++;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], *id);
++    ins->src[0] = *src;
++    return vsir_operand_clone_indirect_indices(&ins->src[0].reg, program);
++}
++
++static bool sm1_init_scalar(struct vsir_program *program, struct vkd3d_shader_instruction *ins,
++        const struct vkd3d_shader_location *location, enum vkd3d_shader_opcode opcode,
++        unsigned int src_count, enum vsir_data_type type, unsigned int *id)
++{
++    if (!vsir_instruction_init_with_params(program, ins, location, opcode, 1, src_count))
++        return false;
++    *id = program->ssa_count++;
++    vsir_dst_operand_init_ssa(&ins->dst[0], *id, type, VSIR_DIMENSION_SCALAR);
++    return true;
++}
++
++/* mov DST.c, VALUE, for each component c of the write mask; values[c] is a scalar source. */
++static bool sm1_write_components(struct vsir_program *program, struct vsir_program_iterator *it,
++        const struct vkd3d_shader_location *location, const struct vsir_dst_operand *dst,
++        const struct vsir_src_operand values[4])
++{
++    struct vkd3d_shader_instruction *ins;
++    unsigned int c;
++
++    for (c = 0; c < 4; ++c)
++    {
++        if (!(dst->write_mask & (1u << c)))
++            continue;
++        ins = vsir_program_iterator_next(it);
++        if (!vsir_instruction_init_with_params(program, ins, location, VSIR_OP_MOV, 1, 1))
++            return false;
++        ins->dst[0] = *dst;
++        ins->dst[0].write_mask = 1u << c;
++        if (!vsir_operand_clone_indirect_indices(&ins->dst[0].reg, program))
++            return false;
++        ins->src[0] = values[c];
++    }
++    return true;
++}
++
++static enum vkd3d_result vsir_program_lower_sm1_lit(struct vsir_program *program, struct vsir_program_iterator *lit)
++{
++    struct vkd3d_shader_instruction *ins = vsir_program_iterator_current(lit);
++    const struct vkd3d_shader_location location = ins->location;
++    const struct vsir_dst_operand dst = ins->dst[0];
++    const struct vsir_src_operand src = ins->src[0];
++    unsigned int v, y, ny, p1, p, l, m, e, cx, cy, t, z;
++    struct vsir_src_operand values[4];
++    struct vsir_program_iterator it;
++
++    /* lit DST, SRC
++     *      ->
++     * DST = (1, max(SRC.x, 0), SRC.x > 0 && SRC.y > 0 ? SRC.y ^ clamp(SRC.w, -128, 128) : 0, 1) */
++
++    if (!(ins = vsir_program_iterator_insert_before(lit, &it, 12 + vkd3d_popcount(dst.write_mask))))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    if (!sm1_save_src(program, ins, &location, &src, &v))
++        goto fail;
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MAX, 2, VSIR_DATA_F32, &y))
++        goto fail;
++    sm1_src_ssa_component(&ins->src[0], v, 0);
++    vsir_src_operand_init_const_f32(&ins->src[1], 0.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MAX, 2, VSIR_DATA_F32, &ny))
++        goto fail;
++    sm1_src_ssa_component(&ins->src[0], v, 1);
++    vsir_src_operand_init_const_f32(&ins->src[1], 0.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MAX, 2, VSIR_DATA_F32, &p1))
++        goto fail;
++    sm1_src_ssa_component(&ins->src[0], v, 3);
++    vsir_src_operand_init_const_f32(&ins->src[1], -128.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MIN, 2, VSIR_DATA_F32, &p))
++        goto fail;
++    vsir_src_operand_init_ssa_f32(&ins->src[0], p1);
++    vsir_src_operand_init_const_f32(&ins->src[1], 128.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_LOG, 1, VSIR_DATA_F32, &l))
++        goto fail;
++    vsir_src_operand_init_ssa_f32(&ins->src[0], ny);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MUL, 2, VSIR_DATA_F32, &m))
++        goto fail;
++    vsir_src_operand_init_ssa_f32(&ins->src[0], l);
++    vsir_src_operand_init_ssa_f32(&ins->src[1], p);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_EXP, 1, VSIR_DATA_F32, &e))
++        goto fail;
++    vsir_src_operand_init_ssa_f32(&ins->src[0], m);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_LTO, 2, VSIR_DATA_U32, &cx))
++        goto fail;
++    vsir_src_operand_init_const_f32(&ins->src[0], 0.0f);
++    sm1_src_ssa_component(&ins->src[1], v, 0);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_LTO, 2, VSIR_DATA_U32, &cy))
++        goto fail;
++    vsir_src_operand_init_const_f32(&ins->src[0], 0.0f);
++    sm1_src_ssa_component(&ins->src[1], v, 1);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MOVC, 3, VSIR_DATA_F32, &t))
++        goto fail;
++    vsir_src_operand_init_ssa(&ins->src[0], cy, VSIR_DATA_U32, VSIR_DIMENSION_SCALAR);
++    vsir_src_operand_init_ssa_f32(&ins->src[1], e);
++    vsir_src_operand_init_const_f32(&ins->src[2], 0.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MOVC, 3, VSIR_DATA_F32, &z))
++        goto fail;
++    vsir_src_operand_init_ssa(&ins->src[0], cx, VSIR_DATA_U32, VSIR_DIMENSION_SCALAR);
++    vsir_src_operand_init_ssa_f32(&ins->src[1], t);
++    vsir_src_operand_init_const_f32(&ins->src[2], 0.0f);
++
++    vsir_src_operand_init_const_f32(&values[0], 1.0f);
++    vsir_src_operand_init_ssa_f32(&values[1], y);
++    vsir_src_operand_init_ssa_f32(&values[2], z);
++    vsir_src_operand_init_const_f32(&values[3], 1.0f);
++    if (!sm1_write_components(program, &it, &location, &dst, values))
++        goto fail;
++
++    vkd3d_shader_instruction_make_nop(vsir_program_iterator_next(&it));
++    return VKD3D_OK;
++
++fail:
++    vsir_program_iterator_nop_range(&it, lit, &location);
++    return VKD3D_ERROR_OUT_OF_MEMORY;
++}
++
++static enum vkd3d_result vsir_program_lower_sm1_dst(struct vsir_program *program, struct vsir_program_iterator *dst_it)
++{
++    struct vkd3d_shader_instruction *ins = vsir_program_iterator_current(dst_it);
++    const struct vkd3d_shader_location location = ins->location;
++    const struct vsir_dst_operand dst = ins->dst[0];
++    const struct vsir_src_operand src0 = ins->src[0], src1 = ins->src[1];
++    struct vsir_src_operand values[4];
++    struct vsir_program_iterator it;
++    unsigned int a, b, y;
++
++    /* dst DST, SRC0, SRC1
++     *      ->
++     * DST = (1, SRC0.y * SRC1.y, SRC0.z, SRC1.w) */
++
++    if (!(ins = vsir_program_iterator_insert_before(dst_it, &it, 3 + vkd3d_popcount(dst.write_mask))))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    if (!sm1_save_src(program, ins, &location, &src0, &a))
++        goto fail;
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_save_src(program, ins, &location, &src1, &b))
++        goto fail;
++
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_init_scalar(program, ins, &location, VSIR_OP_MUL, 2, VSIR_DATA_F32, &y))
++        goto fail;
++    sm1_src_ssa_component(&ins->src[0], a, 1);
++    sm1_src_ssa_component(&ins->src[1], b, 1);
++
++    vsir_src_operand_init_const_f32(&values[0], 1.0f);
++    vsir_src_operand_init_ssa_f32(&values[1], y);
++    sm1_src_ssa_component(&values[2], a, 2);
++    sm1_src_ssa_component(&values[3], b, 3);
++    if (!sm1_write_components(program, &it, &location, &dst, values))
++        goto fail;
++
++    vkd3d_shader_instruction_make_nop(vsir_program_iterator_next(&it));
++    return VKD3D_OK;
++
++fail:
++    vsir_program_iterator_nop_range(&it, dst_it, &location);
++    return VKD3D_ERROR_OUT_OF_MEMORY;
++}
++
++static enum vkd3d_result vsir_program_lower_sm1_crs(struct vsir_program *program, struct vsir_program_iterator *crs)
++{
++    struct vkd3d_shader_instruction *ins = vsir_program_iterator_current(crs);
++    const struct vkd3d_shader_location location = ins->location;
++    const struct vsir_dst_operand dst = ins->dst[0];
++    const struct vsir_src_operand src0 = ins->src[0], src1 = ins->src[1];
++    const uint32_t yzx = VKD3D_SHADER_SWIZZLE(Y, Z, X, W), zxy = VKD3D_SHADER_SWIZZLE(Z, X, Y, W);
++    struct vsir_program_iterator it;
++    unsigned int a, b, p, q, n, r;
++
++    /* crs DST, SRC0, SRC1
++     *      ->
++     * DST.xyz = SRC0.yzx * SRC1.zxy - SRC0.zxy * SRC1.yzx */
++
++    if (!(ins = vsir_program_iterator_insert_before(crs, &it, 6)))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    if (!sm1_save_src(program, ins, &location, &src0, &a))
++        goto fail;
++    ins = vsir_program_iterator_next(&it);
++    if (!sm1_save_src(program, ins, &location, &src1, &b))
++        goto fail;
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MUL, 1, 2))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], p = program->ssa_count++);
++    sm1_src_ssa_swizzle(&ins->src[0], a, yzx);
++    sm1_src_ssa_swizzle(&ins->src[1], b, zxy);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MUL, 1, 2))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], q = program->ssa_count++);
++    sm1_src_ssa_swizzle(&ins->src[0], a, zxy);
++    sm1_src_ssa_swizzle(&ins->src[1], b, yzx);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_NEG, 1, 1))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], n = program->ssa_count++);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], q);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_ADD, 1, 2))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], r = program->ssa_count++);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], p);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[1], n);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MOV, 1, 1))
++        goto fail;
++    ins->dst[0] = dst;
++    ins->dst[0].write_mask &= VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_1 | VKD3DSP_WRITEMASK_2;
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], r);
++    return VKD3D_OK;
++
++fail:
++    vsir_program_iterator_nop_range(&it, crs, &location);
++    return VKD3D_ERROR_OUT_OF_MEMORY;
++}
++
++static enum vkd3d_result vsir_program_lower_sm1_sgn(struct vsir_program *program, struct vsir_program_iterator *sgn)
++{
++    struct vkd3d_shader_instruction *ins = vsir_program_iterator_current(sgn);
++    const struct vkd3d_shader_location location = ins->location;
++    const struct vsir_dst_operand dst = ins->dst[0];
++    const struct vsir_src_operand src = ins->src[0];
++    unsigned int a, gt, lt, fg, fl, n, r;
++    struct vsir_program_iterator it;
++
++    /* sgn DST, SRC0, SRC1, SRC2 (SRC1 and SRC2 are scratch registers)
++     *      ->
++     * DST = (0 < SRC0 ? 1 : 0) - (SRC0 < 0 ? 1 : 0) */
++
++    if (!(ins = vsir_program_iterator_insert_before(sgn, &it, 7)))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    if (!sm1_save_src(program, ins, &location, &src, &a))
++        goto fail;
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_LTO, 1, 2))
++        goto fail;
++    vsir_dst_operand_init_ssa(&ins->dst[0], gt = program->ssa_count++, VSIR_DATA_U32, VSIR_DIMENSION_VEC4);
++    sm1_src_const_vec4(&ins->src[0], 0.0f);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[1], a);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_LTO, 1, 2))
++        goto fail;
++    vsir_dst_operand_init_ssa(&ins->dst[0], lt = program->ssa_count++, VSIR_DATA_U32, VSIR_DIMENSION_VEC4);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], a);
++    sm1_src_const_vec4(&ins->src[1], 0.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MOVC, 1, 3))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], fg = program->ssa_count++);
++    vsir_src_operand_init_ssa(&ins->src[0], gt, VSIR_DATA_U32, VSIR_DIMENSION_VEC4);
++    sm1_src_const_vec4(&ins->src[1], 1.0f);
++    sm1_src_const_vec4(&ins->src[2], 0.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MOVC, 1, 3))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], fl = program->ssa_count++);
++    vsir_src_operand_init_ssa(&ins->src[0], lt, VSIR_DATA_U32, VSIR_DIMENSION_VEC4);
++    sm1_src_const_vec4(&ins->src[1], 1.0f);
++    sm1_src_const_vec4(&ins->src[2], 0.0f);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_NEG, 1, 1))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], n = program->ssa_count++);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], fl);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_ADD, 1, 2))
++        goto fail;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], r = program->ssa_count++);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], fg);
++    vsir_src_operand_init_ssa_f32v4(&ins->src[1], n);
++
++    ins = vsir_program_iterator_next(&it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MOV, 1, 1))
++        goto fail;
++    ins->dst[0] = dst;
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], r);
++    return VKD3D_OK;
++
++fail:
++    vsir_program_iterator_nop_range(&it, sgn, &location);
++    return VKD3D_ERROR_OUT_OF_MEMORY;
++}
++
+ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_program *program,
+         struct vsir_transformation_context *ctx)
+ {
+@@ -3765,6 +4113,33 @@
+                 ret = vsir_program_lower_dp2add(program, &it);
+                 break;
+ 
++            case VSIR_OP_LIT:
++                ret = vsir_program_lower_sm1_lit(program, &it);
++                break;
++
++            case VSIR_OP_DST:
++                ret = vsir_program_lower_sm1_dst(program, &it);
++                break;
++
++            case VSIR_OP_CRS:
++                ret = vsir_program_lower_sm1_crs(program, &it);
++                break;
++
++            case VSIR_OP_SGN:
++                ret = vsir_program_lower_sm1_sgn(program, &it);
++                break;
++
++            /* vs_2_0+ expp / logp are partial precision exp / log */
++            case VSIR_OP_EXPP:
++                ins->opcode = VSIR_OP_EXP;
++                ret = VKD3D_OK;
++                break;
++
++            case VSIR_OP_LOGP:
++                ins->opcode = VSIR_OP_LOG;
++                ret = VKD3D_OK;
++                break;
++
+             case VSIR_OP_ENDREP:
+                 ins->opcode = VSIR_OP_ENDLOOP;
+                 ret = VKD3D_OK;

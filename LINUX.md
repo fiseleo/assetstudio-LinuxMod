@@ -65,7 +65,7 @@ Windows; when that folder is read-only (AppImage, `.deb` install) they go to `~/
 | FMOD (`libfmod.so`) | AudioClip → WAV | optional. Without FMOD, Unity 5+ audio (FSB5) is decoded with the managed [Fmod5Sharp](https://github.com/SamboyCoding/Fmod5Sharp): Vorbis → `.ogg`, PCM/ADPCM → `.wav` |
 | AssetStudio.FBXNative | FBX export (Model menu, Animator, GameObject) | included (`AssetStudio.Avalonia/Libraries/x64/libAssetStudio.FBXNative.so`, needs glibc ≥ 2.28) |
 | HLSLDecompiler / d3dcompiler | DirectX shader decompile | Windows only. On Linux DirectX programs go through Vulkan instead (next rows) |
-| vkd3d-shader (`libvkd3d-shader.so`) | DirectX shader (SM2/3 bytecode, SM4/5 DXBC) → Vulkan SPIR-V | included (vkd3d 1.19, LGPL-2.1, rebuilt via `build-vkd3d-linux.sh`) |
+| vkd3d-shader (`libvkd3d-shader.so`) | DirectX shader (SM2/3 bytecode, SM4/5 DXBC) → Vulkan SPIR-V | included (vkd3d 2.1 + `linux/vkd3d-sm1-instructions.patch`, LGPL-2.1, rebuilt via `build-vkd3d-linux.sh`) |
 | SPIRV-Cross (`libspirv-cross-c-shared.so`) | SPIR-V → Vulkan GLSL (readable shader code) | included (Apache-2.0, rebuilt via `build-spirvcross-linux.sh`). Without it the SPIR-V disassembly is written instead |
 | Vulkan loader + driver (`libvulkan.so.1`) | GPU mesh / model preview | system (e.g. `libvulkan1` + the GPU driver's Vulkan ICD) |
 
@@ -91,7 +91,8 @@ Optional libraries are loaded from the `x64/` folder next to the executable usin
   rebuild with `Shaders/compile.sh`, needs `glslc`).
 - **Shaders**: on Linux, DirectX programs in exported `.shader` files are translated DirectX → Vulkan SPIR-V
   (vkd3d-shader) → Vulkan GLSL (SPIRV-Cross), replacing the Windows-only HLSL decompiler. If that fails the vkd3d
-  Direct3D assembly listing is written instead. Programs that are already Vulkan (SPIR-V) are handled as before.
+  Direct3D assembly listing is written instead. The patch adds the Direct3D 9 instructions vkd3d cannot translate to SPIR-V
+  on its own (`lit`, `dst`, `crs`, `sgn`, `expp`, `logp`), e.g. Unity's `lit`-based gamma conversion in the Standard shader. Programs that are already Vulkan (SPIR-V) are handled as before.
 
 Audio preview plays in-process through PulseAudio / PipeWire (`libpulse-simple.so.0`, present on almost every desktop)
 with Play / Pause / Stop, Loop, a seek bar and volume, like the FMOD player on Windows. WAV and Ogg Vorbis are decoded

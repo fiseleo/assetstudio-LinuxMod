@@ -8,12 +8,13 @@
 #
 # Optional: CC (use an old glibc sysroot for maximum compatibility), CPPFLAGS (extra include dirs for the
 # headers), VKD3D_VERSION, OUT (default AssetStudio.Avalonia/Libraries/x64).
-# vkd3d is LGPL-2.1 (https://gitlab.winehq.org/wine/vkd3d); it is loaded dynamically.
+# vkd3d is LGPL-2.1 (https://gitlab.winehq.org/wine/vkd3d); it is loaded dynamically. linux/vkd3d-*.patch are
+# applied to it (AssetStudio changes, same license).
 set -euo pipefail
 
 cd "$(dirname "$0")"
 ROOT="$PWD"
-VKD3D_VERSION="${VKD3D_VERSION:-1.19}"
+VKD3D_VERSION="${VKD3D_VERSION:-2.1}"
 OUT="${OUT:-$ROOT/AssetStudio.Avalonia/Libraries/x64}"
 WORK="${WORK:-$ROOT/build/vkd3d}"
 
@@ -25,6 +26,14 @@ if [ ! -d "vkd3d-${VKD3D_VERSION}" ]; then
   tar xJf vkd3d.tar.xz
 fi
 cd "vkd3d-${VKD3D_VERSION}"
+
+# D3D9 instructions the SPIR-V backend does not handle (lit, dst, crs, sgn, expp, logp), see the patch
+if [ ! -f .assetstudio-patched ]; then
+  for p in "$ROOT"/linux/vkd3d-*.patch; do
+    patch -p1 < "$p"
+  done
+  touch .assetstudio-patched
+fi
 
 # configure insists on perl's JSON module; JSON::PP (core perl) is enough
 if ! perl -MJSON -e 1 2>/dev/null; then
