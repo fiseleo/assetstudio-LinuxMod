@@ -27,11 +27,6 @@ jobs:
             - name: Build AppImage and .deb
               run: ./build-packages.sh
 
-            - name: Build Linux arm64 release and packages
-              run: |
-                  RID=linux-arm64 ./build-linux.sh
-                  RID=linux-arm64 ./build-packages.sh
-
             - name: Upload Linux Package
               uses: actions/upload-artifact@v4
               with:
@@ -40,9 +35,6 @@ jobs:
                       dist/AssetStudio-linux-x64.tar.gz
                       dist/AssetStudio-x86_64.AppImage
                       dist/assetstudio_*_amd64.deb
-                      dist/AssetStudio-linux-arm64.tar.gz
-                      dist/AssetStudio-aarch64.AppImage
-                      dist/assetstudio_*_arm64.deb
 
     build:
         needs: build-linux
@@ -120,9 +112,6 @@ jobs:
                       AssetStudio-linux-x64.tar.gz
                       AssetStudio-x86_64.AppImage
                       assetstudio_*_amd64.deb
-                      AssetStudio-linux-arm64.tar.gz
-                      AssetStudio-aarch64.AppImage
-                      assetstudio_*_arm64.deb
                   draft: false
                   prerelease: false
                   generate_release_notes: true

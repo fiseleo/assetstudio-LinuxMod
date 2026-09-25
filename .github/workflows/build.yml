@@ -85,21 +85,9 @@ jobs:
       - name: Build AppImage and .deb
         run: ./build-packages.sh
 
-      - name: Build Linux arm64 release and packages
-        run: |
-          RID=linux-arm64 ./build-linux.sh
-          RID=linux-arm64 ./build-packages.sh
-
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AssetStudio-linux-x64-${{ github.sha }}
           path: dist/AssetStudio-linux-x64/
-          retention-days: 14
-
-      - name: Upload Linux arm64 Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: AssetStudio-linux-arm64-${{ github.sha }}
-          path: dist/AssetStudio-linux-arm64/
           retention-days: 14

@@ -17,7 +17,7 @@ dotnet run --project AssetStudio.Avalonia -- /path/to/game/Data
 
 # self-contained release (no .NET needed on the target machine)
 ./build-linux.sh                      # -> dist/AssetStudio-linux-x64 (+ .tar.gz)
-RID=linux-arm64 ./build-linux.sh      # arm64 (aarch64), see below
+RID=linux-arm64 ./build-linux.sh      # other architectures
 SELF_CONTAINED=false ./build-linux.sh # smaller, needs the .NET 8 runtime
 
 # add a launcher to the application menu (run inside the release folder)
@@ -83,27 +83,6 @@ Optional libraries are loaded from the `x64/` (or `arm64/`) folder next to the e
   Build with an old glibc sysroot (e.g. conda-forge `gxx_linux-64=13 sysroot_linux-64=2.28`, via `CC`/`CXX`)
   to keep the glibc requirement low. FBX exports run one at a time: the FBX SDK is not thread-safe.
 
-### Linux arm64 (aarch64)
-
-`RID=linux-arm64 ./build-linux.sh` builds `dist/AssetStudio-linux-arm64` (and `RID=linux-arm64 ./build-packages.sh` the
-aarch64 AppImage / arm64 `.deb`). The arm64 native libraries are prebuilt in `AssetStudio.Avalonia/Libraries/arm64` and
-are copied into `arm64/` (vkd3d-shader, SPIRV-Cross) and next to the executable (`libTexture2DDecoderNative.so`, because
-the Kyaru.Texture2DDecoder.Linux package only ships x64/x86). They need glibc 2.27 or newer.
-
-**FBX export is not available on arm64**: Autodesk only ships the FBX SDK for x86-64 Linux. Exporting models as FBX logs
-a clear error; everything else (textures, shaders, audio, meshes as OBJ, ...) works.
-
-To rebuild the arm64 libraries with a cross compiler (for example Debian/Ubuntu `g++-aarch64-linux-gnu`, or conda-forge
-`gxx_linux-aarch64` with `sysroot_linux-aarch64=2.28` and `HOST=aarch64-conda-linux-gnu`):
-
-```bash
-ARCH=arm64 ./build-texture2ddecoder-linux.sh
-ARCH=arm64 ./build-spirvcross-linux.sh
-ARCH=arm64 ./build-vkd3d-linux.sh      # needs SPIRV-Headers/Vulkan-Headers, e.g. CPPFLAGS=-I/path/to/headers
-```
-
-`ARCH` defaults to x64 for the vkd3d and SPIRV-Cross scripts; `HOST`, `CC`, `CXX` and `STRIP` select the cross toolchain.
-
 ### Vulkan
 
 - **Model preview**: meshes and models are rendered on the GPU with Vulkan (offscreen, 4x MSAA, smooth shading with the
@@ -131,5 +110,4 @@ instead (play / stop only).
 - Asset Browser（Misc. 選單）：開啟 AssetMap（`.map`），各欄位可用正則篩選，可載入選取項目的檔案，或只匯出選取的資源。
 - 音訊預覽直接透過 PulseAudio / PipeWire 播放，有播放、暫停、停止、循環、進度條拖曳和音量（和 Windows 版 FMOD 播放器相同）。
 - 套件：`./build-packages.sh` 產生 AppImage（單一檔案，直接執行；`./AssetStudio-x86_64.AppImage cli ...` 為命令列版）與 `.deb`（`sudo apt install ./assetstudio_*.deb`，安裝到 `/opt/assetstudio`）。程式資料夾唯讀時，`Keys.json`、`Maps/` 與 log 會改存到 `~/.local/share/AssetStudio`。
-- Linux arm64：使用 `RID=linux-arm64 ./build-linux.sh` 建置；貼圖、Shader 等功能皆可使用，但 Autodesk FBX SDK 僅提供 x86-64 Linux 版本，因此 arm64 不支援 FBX 匯出。
 - 設定檔位於 `~/.config/AssetStudio/settings.json`。
