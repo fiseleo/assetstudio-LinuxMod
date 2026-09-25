@@ -36,6 +36,7 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.12" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="Silk.NET.Vulkan" Version="2.23.0" />
   </ItemGroup>
   <ItemGroup>

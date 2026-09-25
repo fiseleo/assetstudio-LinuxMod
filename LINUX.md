@@ -37,7 +37,7 @@ Same layout and menus as the Windows GUI:
 - Scene Hierarchy (checkboxes, regex search: `Enter` next match, `Shift` all, `Ctrl` check, `Alt` root),
   Asset List (regex filter, column sort, type filter, `Ctrl+A`, context menu), Asset Classes
 - Preview: Texture2D / Sprite (channel toggle `Ctrl+R/G/B/A`), text / shader / MonoBehaviour / AnimationClip,
-  fonts, audio info + playback, mesh and model 3D preview (Vulkan GPU renderer, see below: left drag rotate,
+  fonts, audio info + playback (pause, loop, seek, volume), mesh and model 3D preview (Vulkan GPU renderer, see below: left drag rotate,
   right drag pan, wheel zoom, `Ctrl+W` wireframe), Dump tab
 - Export: Convert / Raw / Dump / JSON for all, selected or filtered assets, asset list XML,
   scene hierarchy JSON, class structures
@@ -85,7 +85,10 @@ Optional libraries are loaded from the `x64/` (or `arm64/`) folder next to the e
   (vkd3d-shader) → Vulkan GLSL (SPIRV-Cross), replacing the Windows-only HLSL decompiler. If that fails the vkd3d
   Direct3D assembly listing is written instead. Programs that are already Vulkan (SPIR-V) are handled as before.
 
-Audio playback in the preview uses `pw-play`, `paplay` or `ffplay` (whichever is installed).
+Audio preview plays in-process through PulseAudio / PipeWire (`libpulse-simple.so.0`, present on almost every desktop)
+with Play / Pause / Stop, Loop, a seek bar and volume, like the FMOD player on Windows. WAV and Ogg Vorbis are decoded
+in-process ([NVorbis](https://github.com/NVorbis/NVorbis)). Without libpulse, `pw-play`, `paplay` or `ffplay` is used
+instead (play / stop only).
 
 ## 中文說明
 
@@ -96,4 +99,5 @@ Audio playback in the preview uses `pw-play`, `paplay` or `ffplay` (whichever is
 - 貼圖解碼、FBX 匯出（`x64/libAssetStudio.FBXNative.so`，需 glibc 2.28 以上）都已內建；音訊沒有 FMOD 時會用 Fmod5Sharp 轉成 `.ogg`/`.wav`。
 - 重新編譯 FBX 原生庫：安裝 Linux 版 Autodesk FBX SDK 後執行 `FBXSDK_ROOT=... ./build-fbxnative-linux.sh`。
 - Asset Browser（Misc. 選單）：開啟 AssetMap（`.map`），各欄位可用正則篩選，可載入選取項目的檔案，或只匯出選取的資源。
+- 音訊預覽直接透過 PulseAudio / PipeWire 播放，有播放、暫停、停止、循環、進度條拖曳和音量（和 Windows 版 FMOD 播放器相同）。
 - 設定檔位於 `~/.config/AssetStudio/settings.json`。

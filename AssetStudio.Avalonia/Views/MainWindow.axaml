@@ -244,7 +244,18 @@
                 <TextBlock x:Name="audioInfoLabel" FontSize="14" TextWrapping="Wrap" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button x:Name="audioPlayButton" Content="Play" Click="AudioPlay_Click" />
+                  <Button x:Name="audioPauseButton" Content="Pause" Click="AudioPause_Click" />
                   <Button x:Name="audioStopButton" Content="Stop" Click="AudioStop_Click" />
+                  <CheckBox x:Name="audioLoopCheckBox" Content="Loop" Click="AudioLoop_Click" />
+                </StackPanel>
+                <Grid x:Name="audioProgressRow" ColumnDefinitions="*,Auto" Width="420">
+                  <Slider x:Name="audioProgressSlider" Minimum="0" Maximum="1" />
+                  <TextBlock x:Name="audioTimeLabel" Grid.Column="1" FontFamily="DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, monospace" Text="0:00.0 / 0:00.0" VerticalAlignment="Center" Margin="8,0,0,0" />
+                </Grid>
+                <StackPanel x:Name="audioVolumeRow" Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="Volume" VerticalAlignment="Center" />
+                  <Slider x:Name="audioVolumeSlider" Minimum="0" Maximum="1" Value="0.8" Width="160" />
+                  <TextBlock x:Name="audioStatusLabel" Text="Stopped" VerticalAlignment="Center" Foreground="Gray" Margin="16,0,0,0" />
                 </StackPanel>
                 <TextBlock x:Name="audioHintLabel" Foreground="Gray" TextWrapping="Wrap" MaxWidth="420" />
               </StackPanel>

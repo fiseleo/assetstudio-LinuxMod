@@ -60,6 +60,9 @@ namespace AssetStudio.Avalonia.Views
         private bool meshRenderScheduled;
         private Process audioProcess;
         private string audioTempFile;
+        private AudioPlayer audioPlayer;
+        private DispatcherTimer audioTimer;
+        private bool updatingAudioSlider;
 
         public MainWindow()
         {
@@ -77,6 +80,7 @@ namespace AssetStudio.Avalonia.Views
             InitializeProgressBar();
             InitializeLogger();
             InitializeOptions();
+            InitializeAudioControls();
 
             Studio.RequestAssemblyFolder = () => Dialogs.PickFolderAsync(this, "Select Assembly Folder (Managed DLLs) - cancel to skip", Settings.Default.lastOpenDirectory);
             assetsManager.OnVersionPrompt += AssetsManager_OnVersionPrompt;
@@ -1716,14 +1720,79 @@ namespace AssetStudio.Avalonia.Views
             info.Append($"\nSize: {m_AudioClip.m_Size} bytes");
             assetItem.InfoText = info.ToString();
             audioInfoLabel.Text = info.ToString();
-            var player = FindAudioPlayer();
+            var player = AudioPlayer.IsAvailable ? "PulseAudio / PipeWire" : FindAudioPlayer();
             audioPlayButton.IsEnabled = player != null;
             audioStopButton.IsEnabled = player != null;
             audioHintLabel.Text = player == null
-                ? "Install pw-play, paplay or ffplay to play audio."
-                : NativeLibraries.FmodAvailable ? $"Player: {player} (FMOD)" : $"Player: {player} (decoded with Fmod5Sharp; FMOD not installed)";
+                ? "Install PulseAudio or PipeWire (libpulse), or pw-play / paplay / ffplay, to play audio."
+                : NativeLibraries.FmodAvailable ? $"Output: {player} (FMOD)" : $"Output: {player} (decoded with Fmod5Sharp; FMOD not installed)";
+            ResetAudioControls(TimeSpan.FromSeconds(m_AudioClip.m_Length));
             ShowInfo(assetItem);
             audioPanel.IsVisible = true;
+        }
+
+        private void InitializeAudioControls()
+        {
+            audioTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(50), DispatcherPriority.Background, (_, _) => UpdateAudioProgress());
+            audioProgressSlider.PropertyChanged += (_, e) =>
+            {
+                // user drag / click on the bar (not the timer moving it)
+                if (e.Property == global::Avalonia.Controls.Primitives.RangeBase.ValueProperty && !updatingAudioSlider)
+                    audioPlayer?.Seek(TimeSpan.FromSeconds(audioProgressSlider.Value));
+            };
+            audioVolumeSlider.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == global::Avalonia.Controls.Primitives.RangeBase.ValueProperty && audioPlayer != null)
+                    audioPlayer.Volume = (float)audioVolumeSlider.Value;
+            };
+        }
+
+        private void ResetAudioControls(TimeSpan length)
+        {
+            var inProcess = AudioPlayer.IsAvailable;
+            audioPauseButton.IsEnabled = false;
+            audioPauseButton.Content = "Pause";
+            audioLoopCheckBox.IsVisible = inProcess;
+            audioProgressRow.IsVisible = inProcess;
+            audioVolumeRow.IsVisible = inProcess;
+            audioStatusLabel.Text = "Stopped";
+            updatingAudioSlider = true;
+            audioProgressSlider.Maximum = Math.Max(length.TotalSeconds, 0.001);
+            audioProgressSlider.Value = 0;
+            updatingAudioSlider = false;
+            audioTimeLabel.Text = $"{FormatAudioTime(TimeSpan.Zero)} / {FormatAudioTime(length)}";
+        }
+
+        private static string FormatAudioTime(TimeSpan time) => $"{(int)time.TotalMinutes}:{time.Seconds:00}.{time.Milliseconds / 100}";
+
+        private void UpdateAudioProgress()
+        {
+            if (audioPlayer == null)
+            {
+                audioTimer.Stop();
+                return;
+            }
+            var position = audioPlayer.Position;
+            updatingAudioSlider = true;
+            audioProgressSlider.Value = position.TotalSeconds;
+            updatingAudioSlider = false;
+            audioTimeLabel.Text = $"{FormatAudioTime(position)} / {FormatAudioTime(audioPlayer.Length)}";
+            if (audioPlayer.Error != null)
+            {
+                audioStatusLabel.Text = "Error";
+                StatusStripUpdate($"Audio output failed: {audioPlayer.Error}");
+                StopAudio();
+            }
+            else if (audioPlayer.IsFinished)
+            {
+                audioStatusLabel.Text = "Stopped";
+                audioPauseButton.IsEnabled = false;
+                audioTimer.Stop();
+            }
+            else
+            {
+                audioStatusLabel.Text = audioPlayer.IsPaused ? "Paused" : "Playing";
+            }
         }
 
         private static string FindAudioPlayer()
@@ -1744,8 +1813,18 @@ namespace AssetStudio.Avalonia.Views
         {
             if (lastSelectedItem?.Asset is not AudioClip m_AudioClip)
                 return;
+            if (audioPlayer != null)
+            {
+                // like the Windows version: Play while playing restarts, otherwise play from the bar position
+                var start = audioPlayer.IsPaused && !audioPlayer.IsFinished ? TimeSpan.FromSeconds(audioProgressSlider.Value) : TimeSpan.Zero;
+                audioPlayer.Seek(start);
+                StartAudioPlayer();
+                return;
+            }
             StopAudio();
             var item = lastSelectedItem;
+            audioPlayButton.IsEnabled = false;
+            audioStatusLabel.Text = "Decoding...";
             var (data, extension) = await Task.Run(() =>
             {
                 if (NativeLibraries.FmodAvailable)
@@ -1758,13 +1837,71 @@ namespace AssetStudio.Avalonia.Views
                     return (converted, ext);
                 return ((byte[])null, (string)null);
             });
+            var player = data != null && AudioPlayer.IsAvailable ? await Task.Run(() => AudioPlayer.FromFile(data, extension)) : null;
+            audioPlayButton.IsEnabled = true;
             if (item != lastSelectedItem)
+            {
+                player?.Dispose();
                 return;
+            }
+            audioStatusLabel.Text = "Stopped";
             if (data == null)
             {
                 StatusStripUpdate("Unable to decode this audio clip.");
                 return;
             }
+            if (player != null && player.Start())
+            {
+                audioPlayer = player;
+                audioPlayer.Loop = audioLoopCheckBox.IsChecked == true;
+                audioPlayer.Volume = (float)audioVolumeSlider.Value;
+                ResetAudioControls(audioPlayer.Length);
+                if (audioProgressSlider.Value > 0)
+                    audioPlayer.Seek(TimeSpan.FromSeconds(audioProgressSlider.Value));
+                StartAudioPlayer();
+                return;
+            }
+            if (player != null)
+            {
+                Logger.Warning($"Unable to open audio output: {player.Error}");
+                player.Dispose();
+            }
+            PlayWithExternalPlayer(data, extension);
+        }
+
+        private void StartAudioPlayer()
+        {
+            audioPlayer.Play();
+            audioPauseButton.IsEnabled = true;
+            audioPauseButton.Content = "Pause";
+            audioStatusLabel.Text = "Playing";
+            audioTimer.Start();
+        }
+
+        private void AudioPause_Click(object sender, RoutedEventArgs e)
+        {
+            if (audioPlayer == null || audioPlayer.IsFinished)
+                return;
+            if (audioPlayer.IsPaused)
+            {
+                StartAudioPlayer();
+            }
+            else
+            {
+                audioPlayer.Pause();
+                audioPauseButton.Content = "Resume";
+                audioStatusLabel.Text = "Paused";
+            }
+        }
+
+        private void AudioLoop_Click(object sender, RoutedEventArgs e)
+        {
+            if (audioPlayer != null)
+                audioPlayer.Loop = audioLoopCheckBox.IsChecked == true;
+        }
+
+        private async void PlayWithExternalPlayer(byte[] data, string extension)
+        {
             var player = FindAudioPlayer();
             if (player == null)
                 return;
@@ -1790,10 +1927,25 @@ namespace AssetStudio.Avalonia.Views
             }
         }
 
-        private void AudioStop_Click(object sender, RoutedEventArgs e) => StopAudio();
+        private void AudioStop_Click(object sender, RoutedEventArgs e)
+        {
+            if (audioPlayer != null)
+            {
+                // keep the decoded clip, so Play starts again right away
+                audioPlayer.Pause();
+                audioPlayer.Seek(TimeSpan.Zero);
+                audioTimer.Stop();
+                ResetAudioControls(audioPlayer.Length);
+                return;
+            }
+            StopAudio();
+        }
 
         private void StopAudio()
         {
+            audioTimer?.Stop();
+            audioPlayer?.Dispose();
+            audioPlayer = null;
             try
             {
                 if (audioProcess != null && !audioProcess.HasExited)
