@@ -42,6 +42,8 @@ Same layout and menus as the Windows GUI:
 - Export: Convert / Raw / Dump / JSON for all, selected or filtered assets, asset list XML,
   scene hierarchy JSON, class structures
 - Game selection, Unity version, UnityCN keys, AI versions, CABMap / AssetMap building (Misc. menu)
+- Asset Browser (Misc. menu): open an AssetMap (`.map`), filter it by regex per column, then load the files
+  of the selected entries or export just the selected assets (files are loaded one at a time)
 - Export options dialog (same settings as Windows)
 
 Settings are stored in `~/.config/AssetStudio/settings.json`. The log is shown in the panel at the
@@ -93,4 +95,5 @@ Audio playback in the preview uses `pw-play`, `paplay` or `ffplay` (whichever is
 - Shader 匯出：DirectX 程式在 Linux 上改走 Vulkan：vkd3d-shader 轉成 SPIR-V，再由 SPIRV-Cross 反編譯成 Vulkan GLSL（取代 Windows 專用的 HLSL 反編譯器）。
 - 貼圖解碼、FBX 匯出（`x64/libAssetStudio.FBXNative.so`，需 glibc 2.28 以上）都已內建；音訊沒有 FMOD 時會用 Fmod5Sharp 轉成 `.ogg`/`.wav`。
 - 重新編譯 FBX 原生庫：安裝 Linux 版 Autodesk FBX SDK 後執行 `FBXSDK_ROOT=... ./build-fbxnative-linux.sh`。
+- Asset Browser（Misc. 選單）：開啟 AssetMap（`.map`），各欄位可用正則篩選，可載入選取項目的檔案，或只匯出選取的資源。
 - 設定檔位於 `~/.config/AssetStudio/settings.json`。

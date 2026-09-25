@@ -935,6 +935,22 @@ namespace AssetStudio.Avalonia.Views
             UpdateContainers();
         }
 
+        private AssetBrowserWindow assetBrowser;
+
+        private void AssetBrowser_Click(object sender, RoutedEventArgs e)
+        {
+            if (assetBrowser == null)
+            {
+                assetBrowser = new AssetBrowserWindow(this);
+                assetBrowser.Closed += (_, _) => assetBrowser = null;
+                assetBrowser.Show(this);
+            }
+            else
+            {
+                assetBrowser.Activate();
+            }
+        }
+
         private void UpdateContainers()
         {
             // AssetItem raises PropertyChanged, so the grid refreshes itself.

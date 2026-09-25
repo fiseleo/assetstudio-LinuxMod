@@ -110,6 +110,8 @@
         <MenuItem x:Name="assetMapTypeMenu" Header="AssetMap type" />
         <Separator />
         <MenuItem Header="Load AI (asset index JSON)..." Click="LoadAI_Click" />
+        <Separator />
+        <MenuItem Header="Asset Browser..." Click="AssetBrowser_Click" />
       </MenuItem>
       <MenuItem Header="_Debug">
         <MenuItem x:Name="showErrorMessage" Header="Show error message box" ToggleType="CheckBox" IsChecked="True" Click="ShowErrorMessage_Click" />
