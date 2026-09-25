@@ -761,7 +761,7 @@ namespace AssetStudio
 
             if (version[0] > 5 || (version[0] == 5 && version[1] >= 2))//5.2 and up
             {
-                m_TDoFArray = reader.ReadVector3Array();
+                m_TDoFArray = reader.ReadFloat3Array();
             }
         }
 
@@ -1818,11 +1818,11 @@ namespace AssetStudio
         public bool m_UseHighQualityCurve;
         public List<QuaternionCurve> m_RotationCurves;
         public List<CompressedAnimationCurve> m_CompressedRotationCurves;
-        public List<Vector3Curve> m_EulerCurves;
+        public List<Vector3Curve> m_EulerCurves = new List<Vector3Curve>(); // 5.3 and up
         public List<Vector3Curve> m_PositionCurves;
         public List<Vector3Curve> m_ScaleCurves;
         public List<FloatCurve> m_FloatCurves;
-        public List<PPtrCurve> m_PPtrCurves;
+        public List<PPtrCurve> m_PPtrCurves = new List<PPtrCurve>(); // not in older versions
         public float m_SampleRate;
         public int m_WrapMode;
         public AABB m_Bounds;

@@ -10,7 +10,11 @@ namespace AssetStudio
         public PPtr<Mesh> m_AdditionalVertexStreams;
         public MeshRenderer(ObjectReader reader) : base(reader)
         {
-            m_AdditionalVertexStreams = new PPtr<Mesh>(reader);
+            // not serialized in Unity 4.x (the object ends after the Renderer fields there)
+            if (version[0] >= 5 && reader.Position - reader.byteStart < reader.byteSize)
+            {
+                m_AdditionalVertexStreams = new PPtr<Mesh>(reader);
+            }
         }
     }
 }

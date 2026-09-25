@@ -10,8 +10,6 @@ namespace AssetStudio
         [JsonIgnore]
         public ObjectReader reader;
         [JsonIgnore]
-        private readonly object readerLock = new object();
-        [JsonIgnore]
         public long m_PathID;
         [JsonIgnore]
         public int[] version;
@@ -53,7 +51,7 @@ namespace AssetStudio
         {
             if (serializedType?.m_Type != null)
             {
-                lock (readerLock)
+                lock (reader.BaseStream)  // readers of one file share the stream
                 {
                     return TypeTreeHelper.ReadTypeString(serializedType.m_Type, reader);
                 }
@@ -65,7 +63,7 @@ namespace AssetStudio
         {
             if (m_Type != null)
             {
-                lock (readerLock)
+                lock (reader.BaseStream)  // readers of one file share the stream
                 {
                     return TypeTreeHelper.ReadTypeString(m_Type, reader);
                 }
@@ -77,7 +75,7 @@ namespace AssetStudio
         {
             if (serializedType?.m_Type != null)
             {
-                lock (readerLock)
+                lock (reader.BaseStream)  // readers of one file share the stream
                 {
                     return TypeTreeHelper.ReadType(serializedType.m_Type, reader);
                 }
@@ -89,7 +87,7 @@ namespace AssetStudio
         {
             if (m_Type != null)
             {
-                lock (readerLock)
+                lock (reader.BaseStream)  // readers of one file share the stream
                 {
                     return TypeTreeHelper.ReadType(m_Type, reader);
                 }
@@ -100,7 +98,7 @@ namespace AssetStudio
         public byte[] GetRawData()
         {
             Logger.Verbose($"Dumping raw bytes of the object with {m_PathID} in file {assetsFile.fileName}...");
-            lock (readerLock)
+            lock (reader.BaseStream)  // readers of one file share the stream
             {
                 reader.Reset();
                 return reader.ReadBytes((int)byteSize);

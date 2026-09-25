@@ -537,11 +537,11 @@ namespace AssetStudio
             }
             else
             {
-                m_PositionValues = reader.ReadVector3Array();
+                m_PositionValues = reader.ReadFloat3Array();
 
                 m_QuaternionValues = reader.ReadVector4Array();
 
-                m_ScaleValues = reader.ReadVector3Array();
+                m_ScaleValues = reader.ReadFloat3Array();
 
                 if (version[0] > 5 || (version[0] == 5 && version[1] >= 5)) //5.5 and up
                 {

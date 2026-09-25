@@ -58,9 +58,20 @@ namespace AssetStudio
             Position = byteStart;
         }
 
+        /// <summary>
+        /// Serialized Vector3f (Transform, AABB, curves, blend shapes, ...): always 12 bytes.
+        /// </summary>
         public Vector3 ReadVector3()
         {
-            if (version[0] > 5 || (version[0] == 5 && version[1] >= 4))
+            return new Vector3(ReadSingle(), ReadSingle(), ReadSingle());
+        }
+
+        /// <summary>
+        /// Mecanim runtime math::float3 (xform, avatar, animator values, ...): stored as float4 before Unity 5.4.
+        /// </summary>
+        public Vector3 ReadFloat3()
+        {
+            if (version[0] > 5 || (version[0] == 5 && version[1] >= 4)) //5.4 and up
             {
                 return new Vector3(ReadSingle(), ReadSingle(), ReadSingle());
             }
@@ -72,9 +83,9 @@ namespace AssetStudio
 
         public XForm ReadXForm()
         {
-            var t = ReadVector3();
+            var t = ReadFloat3();
             var q = ReadQuaternion();
-            var s = ReadVector3();
+            var s = ReadFloat3();
 
             return new XForm(t, q, s);
         }
@@ -95,6 +106,15 @@ namespace AssetStudio
                 length = ReadInt32();
             }
             return ReadArray(ReadVector3, length);
+        }
+
+        public Vector3[] ReadFloat3Array(int length = 0)
+        {
+            if (length == 0)
+            {
+                length = ReadInt32();
+            }
+            return ReadArray(ReadFloat3, length);
         }
 
         public XForm[] ReadXFormArray()
