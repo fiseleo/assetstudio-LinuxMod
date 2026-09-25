@@ -10,7 +10,7 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MessagePack" Version="2.6.100-alpha" />
+    <PackageReference Include="MessagePack" Version="2.5.305" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="ZstdSharp.Port" Version="0.7.2" />
   </ItemGroup>

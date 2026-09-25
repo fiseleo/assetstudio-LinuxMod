@@ -170,6 +170,6 @@ namespace AssetStudio.Avalonia.Views
             return result?.TryGetLocalPath();
         }
 
-        public static bool IsFileDrop(DragEventArgs e) => e.Data.Contains(DataFormats.Files);
+        public static bool IsFileDrop(DragEventArgs e) => e.DataTransfer.Contains(DataFormat.File);
     }
 }

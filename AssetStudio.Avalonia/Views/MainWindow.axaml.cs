@@ -367,7 +367,7 @@ namespace AssetStudio.Avalonia.Views
 
         private void Window_Drop(object sender, DragEventArgs e)
         {
-            var paths = e.Data.GetFiles()?.Select(x => x.TryGetLocalPath()).Where(x => x != null).ToArray();
+            var paths = e.DataTransfer.TryGetFiles()?.Select(x => x.TryGetLocalPath()).Where(x => x != null).ToArray();
             if (paths?.Length > 0)
             {
                 LoadPaths(paths);

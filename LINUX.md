@@ -26,8 +26,8 @@ SELF_CONTAINED=false ./build-linux.sh # smaller, needs the .NET 8 runtime
 
 The release folder contains both `AssetStudio.Avalonia` (GUI) and `AssetStudio.CLI`.
 
-> Note: `dotnet build AssetStudio.sln` on Linux also tries to build the WinForms project.
-> Build the individual projects instead (`AssetStudio.Avalonia`, `AssetStudio.CLI`), or use `build-linux.sh`.
+> Note: `dotnet build AssetStudio.sln` works on Linux too. The WinForms project (`AssetStudio.GUI`) is only
+> compiled there (to catch build breaks), it cannot run. Use `AssetStudio.Avalonia` or `build-linux.sh` to run.
 
 ## Features
 

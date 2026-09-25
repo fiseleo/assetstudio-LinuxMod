@@ -2,6 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFrameworks>net8.0-windows;net10.0-windows</TargetFrameworks>
+    <!-- Linux / macOS: compile-only (WinForms does not run there), so `dotnet build AssetStudio.sln` works everywhere -->
+    <EnableWindowsTargeting Condition="!$([MSBuild]::IsOSPlatform('Windows'))">true</EnableWindowsTargeting>
+    <TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('Windows')) And !$([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkVersion)', '10.0'))">net8.0-windows</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Resources\as.ico</ApplicationIcon>
@@ -112,11 +115,11 @@
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
   </ItemGroup>
-  <Target Name="CopyExtraFiles" AfterTargets="AfterBuild">
+  <Target Name="CopyExtraFiles" AfterTargets="AfterBuild" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <Copy SourceFiles="$(SolutionDir)AssetStudio.FBXNative\bin\Win32\$(Configuration)\AssetStudio.FBXNative.dll" DestinationFolder="$(TargetDir)x86" ContinueOnError="true" />
     <Copy SourceFiles="$(SolutionDir)AssetStudio.FBXNative\bin\x64\$(Configuration)\AssetStudio.FBXNative.dll" DestinationFolder="$(TargetDir)x64" ContinueOnError="true" />
   </Target>
-  <Target Name="PublishExtraFiles" AfterTargets="Publish">
+  <Target Name="PublishExtraFiles" AfterTargets="Publish" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <Copy SourceFiles="$(TargetDir)x86\AssetStudio.FBXNative.dll" DestinationFolder="$(PublishDir)x86" ContinueOnError="true" />
     <Copy SourceFiles="$(TargetDir)x64\AssetStudio.FBXNative.dll" DestinationFolder="$(PublishDir)x64" ContinueOnError="true" />
   </Target>
