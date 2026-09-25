@@ -10,6 +10,9 @@ on:
       - '**/.gitignore'
       - '**/.gitattributes'
       - '*.md'
+  pull_request:
+    branches:
+      - 'main'
   workflow_dispatch:
 
 jobs:
@@ -78,6 +81,9 @@ jobs:
 
       - name: Build Linux release (Avalonia GUI + CLI)
         run: ./build-linux.sh
+
+      - name: Build AppImage and .deb
+        run: ./build-packages.sh
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4

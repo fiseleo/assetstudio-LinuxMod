@@ -44,8 +44,8 @@ namespace AssetStudio
         private StreamWriter Writer;
         public FileLogger()
         {
-            var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, LogFileName);
-            var prevLogPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, PrevLogFileName);
+            var logPath = Path.Combine(AppData.Directory, LogFileName);
+            var prevLogPath = Path.Combine(AppData.Directory, PrevLogFileName);
 
             if (File.Exists(logPath))
             {

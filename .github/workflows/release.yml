@@ -24,11 +24,17 @@ jobs:
             - name: Build Linux release (Avalonia GUI + CLI)
               run: ./build-linux.sh
 
+            - name: Build AppImage and .deb
+              run: ./build-packages.sh
+
             - name: Upload Linux Package
               uses: actions/upload-artifact@v4
               with:
                   name: AssetStudio-linux-x64
-                  path: dist/AssetStudio-linux-x64.tar.gz
+                  path: |
+                      dist/AssetStudio-linux-x64.tar.gz
+                      dist/AssetStudio-x86_64.AppImage
+                      dist/assetstudio_*_amd64.deb
 
     build:
         needs: build-linux
@@ -104,6 +110,8 @@ jobs:
                       AssetStudio-net8.0-win.zip
                       AssetStudio-net10.0-win.zip
                       AssetStudio-linux-x64.tar.gz
+                      AssetStudio-x86_64.AppImage
+                      assetstudio_*_amd64.deb
                   draft: false
                   prerelease: false
                   generate_release_notes: true

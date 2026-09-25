@@ -22,7 +22,15 @@ SELF_CONTAINED=false ./build-linux.sh # smaller, needs the .NET 8 runtime
 
 # add a launcher to the application menu (run inside the release folder)
 ./install-desktop-entry.sh
+
+# packages (from the release folder above, built first if missing)
+./build-packages.sh                   # -> dist/AssetStudio-x86_64.AppImage + dist/assetstudio_<version>_amd64.deb
 ```
+
+- **AppImage**: one file, no installation: `chmod +x AssetStudio-x86_64.AppImage && ./AssetStudio-x86_64.AppImage`.
+  The command line version is inside too: `./AssetStudio-x86_64.AppImage cli <input> <output> --game Normal`.
+- **.deb** (Debian / Ubuntu): `sudo apt install ./assetstudio_<version>_amd64.deb` installs to `/opt/assetstudio`,
+  with `assetstudio` / `assetstudio-cli` commands and a menu entry.
 
 The release folder contains both `AssetStudio.Avalonia` (GUI) and `AssetStudio.CLI`.
 
@@ -47,7 +55,8 @@ Same layout and menus as the Windows GUI:
 - Export options dialog (same settings as Windows)
 
 Settings are stored in `~/.config/AssetStudio/settings.json`. The log is shown in the panel at the
-bottom right and written to stdout (Debug menu). `Keys.json` and `Maps/` live next to the executable, as on Windows.
+bottom right and written to stdout (Debug menu). `Keys.json`, `Maps/` and `log.txt` live next to the executable, as on
+Windows; when that folder is read-only (AppImage, `.deb` install) they go to `~/.local/share/AssetStudio` instead.
 
 ## Native libraries
 
@@ -100,4 +109,5 @@ instead (play / stop only).
 - 重新編譯 FBX 原生庫：安裝 Linux 版 Autodesk FBX SDK 後執行 `FBXSDK_ROOT=... ./build-fbxnative-linux.sh`。
 - Asset Browser（Misc. 選單）：開啟 AssetMap（`.map`），各欄位可用正則篩選，可載入選取項目的檔案，或只匯出選取的資源。
 - 音訊預覽直接透過 PulseAudio / PipeWire 播放，有播放、暫停、停止、循環、進度條拖曳和音量（和 Windows 版 FMOD 播放器相同）。
+- 套件：`./build-packages.sh` 產生 AppImage（單一檔案，直接執行；`./AssetStudio-x86_64.AppImage cli ...` 為命令列版）與 `.deb`（`sudo apt install ./assetstudio_*.deb`，安裝到 `/opt/assetstudio`）。程式資料夾唯讀時，`Keys.json`、`Maps/` 與 log 會改存到 `~/.local/share/AssetStudio`。
 - 設定檔位於 `~/.config/AssetStudio/settings.json`。
