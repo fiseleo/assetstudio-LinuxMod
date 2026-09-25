@@ -17,8 +17,19 @@ namespace AssetStudio.FbxInterop
 
         public FbxExporterContext(Fbx.ExportOptions exportOptions)
         {
-            Fbx.QuaternionToEuler(Quaternion.Zero); // workaround to init dll
-            _pContext = AsFbxCreateContext();
+            try
+            {
+                Fbx.QuaternionToEuler(Quaternion.Zero); // workaround to init dll
+                _pContext = AsFbxCreateContext();
+            }
+            catch
+            {
+                // e.g. native library missing: nothing to clean up, and the finalizer must not run
+                // on a half-constructed object (an exception there would crash the process)
+                IsDisposed = true;
+                GC.SuppressFinalize(this);
+                throw;
+            }
             _frameToNode = new Dictionary<ImportedFrame, IntPtr>();
             _createdMaterials = new List<KeyValuePair<string, IntPtr>>();
             _createdTextures = new Dictionary<string, IntPtr>();
@@ -47,11 +58,14 @@ namespace AssetStudio.FbxInterop
         {
             IsDisposed = true;
 
-            _frameToNode.Clear();
-            _createdMaterials.Clear();
-            _createdTextures.Clear();
+            _frameToNode?.Clear();
+            _createdMaterials?.Clear();
+            _createdTextures?.Clear();
 
-            AsFbxDisposeContext(ref _pContext);
+            if (_pContext != IntPtr.Zero)
+            {
+                AsFbxDisposeContext(ref _pContext);
+            }
         }
 
         private void EnsureNotDisposed()

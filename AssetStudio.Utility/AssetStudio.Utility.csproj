@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkVersion)', '10.0'))">net8.0;net10.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <Version>1.36.00</Version>
     <AssemblyVersion>1.36.00</AssemblyVersion>
@@ -10,7 +11,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Fmod5Sharp" Version="3.1.0" />
     <PackageReference Include="Kyaru.Texture2DDecoder" Version="0.17.0" />
+    <PackageReference Include="Kyaru.Texture2DDecoder.Linux" Version="0.1.0" />
     <PackageReference Include="Kyaru.Texture2DDecoder.Windows" Version="0.1.0" />
     <PackageReference Include="Mono.Cecil" Version="0.11.5" />
     <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="1.0.0-beta15" />

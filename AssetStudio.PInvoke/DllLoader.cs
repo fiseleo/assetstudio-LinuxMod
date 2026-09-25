@@ -27,8 +27,9 @@ namespace AssetStudio.PInvoke
 
         private static string GetDirectedDllDirectory()
         {
-            var localPath = Process.GetCurrentProcess().MainModule.FileName;
-            var localDir = Path.GetDirectoryName(localPath);
+            // AppContext.BaseDirectory is the application folder even when started through `dotnet app.dll`,
+            // where the main module would be the dotnet host instead.
+            var localDir = AppContext.BaseDirectory;
 
             var subDir = Environment.Is64BitProcess ? "x64" : "x86";
 
@@ -90,33 +91,11 @@ namespace AssetStudio.PInvoke
                 var dllFileName = $"lib{dllName}{dllExtension}";
                 var directedDllPath = Path.Combine(dllDir, dllFileName);
 
-                const int ldFlags = RTLD_NOW | RTLD_GLOBAL;
-                var hLibrary = DlOpen(directedDllPath, ldFlags);
-
-                if (hLibrary == IntPtr.Zero)
-                {
-                    var pErrStr = DlError();
-                    // `PtrToStringAnsi` always uses the specific constructor of `String` (see dotnet/core#2325),
-                    // which in turn interprets the byte sequence with system default codepage. On OSX and Linux
-                    // the codepage is UTF-8 so the error message should be handled correctly.
-                    var errorMessage = Marshal.PtrToStringAnsi(pErrStr);
-
-                    throw new DllNotFoundException(errorMessage);
-                }
+                // NativeLibrary.Load instead of P/Invoking dlopen from "libdl": most systems only ship
+                // libdl.so.2 (no unversioned libdl.so without dev packages), and since glibc 2.34 dlopen lives in libc.
+                // Once loaded, [DllImport(dllName)] resolves to this library through its SONAME.
+                NativeLibrary.Load(directedDllPath);
             }
-
-            // OSX and most Linux OS use LP64 so `int` is still 32-bit even on 64-bit platforms.
-            // void *dlopen(const char *filename, int flag);
-            [DllImport("libdl", EntryPoint = "dlopen")]
-            private static extern IntPtr DlOpen([MarshalAs(UnmanagedType.LPStr)] string fileName, int flags);
-
-            // char *dlerror(void);
-            [DllImport("libdl", EntryPoint = "dlerror")]
-            private static extern IntPtr DlError();
-
-            private const int RTLD_LAZY = 0x1;
-            private const int RTLD_NOW = 0x2;
-            private const int RTLD_GLOBAL = 0x100;
 
         }
 

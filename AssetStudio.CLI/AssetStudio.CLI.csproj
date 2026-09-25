@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net8.0-windows;net10.0-windows</TargetFrameworks>
+    <!-- Linux / macOS: the CLI has no Windows-only dependencies -->
+    <TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net8.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <ApplicationIcon>Resources\as.ico</ApplicationIcon>
     <Version>1.36.00</Version>

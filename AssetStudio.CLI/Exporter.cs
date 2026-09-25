@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using System;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System.Collections.Generic;
 using System.IO;
@@ -47,10 +48,21 @@ namespace AssetStudio.CLI
             var converter = new AudioClipConverter(m_AudioClip);
             if (Properties.Settings.Default.convertAudio && converter.IsSupport)
             {
-                if (!TryExportFile(exportPath, item, ".wav", out var exportFullPath))
-                    return false;
-                var buffer = converter.ConvertToWav();
+                byte[] buffer;
+                var extension = ".wav";
+                try
+                {
+                    buffer = converter.ConvertToWav();
+                }
+                catch (Exception e) when (e is DllNotFoundException || e is TypeInitializationException)
+                {
+                    // FMOD is not available (e.g. on Linux): fall back to the managed FSB5 decoder
+                    if (!Fsb5Decoder.TryConvert(m_AudioClip, out buffer, out extension))
+                        buffer = null;
+                }
                 if (buffer == null)
+                    return false;
+                if (!TryExportFile(exportPath, item, extension, out var exportFullPath))
                     return false;
                 File.WriteAllBytes(exportFullPath, buffer);
             }
@@ -448,7 +460,15 @@ namespace AssetStudio.CLI
                 fbxVersion = Properties.Settings.Default.fbxVersion,
                 fbxFormat = Properties.Settings.Default.fbxFormat
             };
-            ModelExporter.ExportFbx(exportPath, convert, exportOptions);
+            try
+            {
+                ModelExporter.ExportFbx(exportPath, convert, exportOptions);
+            }
+            catch (TypeInitializationException e) when (e.InnerException is DllNotFoundException)
+            {
+                var library = OperatingSystem.IsWindows() ? "AssetStudio.FBXNative.dll" : OperatingSystem.IsMacOS() ? "libAssetStudio.FBXNative.dylib" : "libAssetStudio.FBXNative.so";
+                throw new NotSupportedException($"FBX export needs the native library {library} in the x64 folder next to the executable.", e);
+            }
         }
 
         public static bool ExportDumpFile(AssetItem item, string exportPath)
