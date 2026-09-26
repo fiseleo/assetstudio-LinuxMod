@@ -304,6 +304,29 @@
                 </StackPanel>
                 <TextBlock x:Name="audioHintLabel" Foreground="Gray" TextWrapping="Wrap" MaxWidth="420" />
               </StackPanel>
+              <!-- VideoClip / MovieTexture: frames from GStreamer -->
+              <DockPanel x:Name="videoPanel" IsVisible="False" Background="Black">
+                <Border DockPanel.Dock="Bottom" Background="#B0000000" Padding="6,4">
+                  <ThemeVariantScope RequestedThemeVariant="Dark">
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+                      <Button x:Name="videoPlayButton" Grid.Column="0" Content="Play" MinWidth="64" Click="VideoPlay_Click" />
+                      <Button Grid.Column="1" Content="Stop" Margin="6,0" Click="VideoStop_Click" />
+                      <Slider x:Name="videoSlider" Grid.Column="2" Minimum="0" Maximum="1" VerticalAlignment="Center" Margin="4,0" />
+                      <TextBlock x:Name="videoTimeLabel" Grid.Column="3" VerticalAlignment="Center" MinWidth="110" Margin="6,0"
+                                 FontFamily="DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, monospace" />
+                      <CheckBox x:Name="videoLoopCheckBox" Grid.Column="4" Content="Loop" Click="VideoLoop_Click" />
+                      <TextBlock Grid.Column="5" Text="Volume" VerticalAlignment="Center" Margin="8,0,4,0" />
+                      <Slider x:Name="videoVolumeSlider" Grid.Column="6" Minimum="0" Maximum="1" Value="0.8" Width="100" VerticalAlignment="Center" />
+                      <Button Grid.Column="7" Content="Open externally" Margin="8,0,0,0" Click="VideoOpenExternal_Click" />
+                    </Grid>
+                  </ThemeVariantScope>
+                </Border>
+                <Grid>
+                  <Image x:Name="videoImage" Stretch="Uniform" RenderOptions.BitmapInterpolationMode="MediumQuality" />
+                  <TextBlock x:Name="videoMessage" Foreground="LightGray" TextWrapping="Wrap" MaxWidth="480" TextAlignment="Center"
+                             HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+              </DockPanel>
               <Border x:Name="assetInfoBorder" IsVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6"
                       Background="#B0000000" CornerRadius="3" Padding="6,4" IsHitTestVisible="False">
                 <TextBlock x:Name="assetInfoLabel" Foreground="White" />

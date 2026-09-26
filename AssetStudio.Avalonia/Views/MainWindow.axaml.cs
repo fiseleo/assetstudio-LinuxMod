@@ -84,11 +84,16 @@ namespace AssetStudio.Avalonia.Views
             InitializeLogger();
             InitializeOptions();
             InitializeAudioControls();
+            InitializeVideoControls();
 
             Studio.RequestAssemblyFolder = () => Dialogs.PickFolderAsync(this, "Select Assembly Folder (Managed DLLs) - cancel to skip", Settings.Default.lastOpenDirectory);
             assetsManager.OnVersionPrompt += AssetsManager_OnVersionPrompt;
 
-            Closing += (_, _) => StopAudio();
+            Closing += (_, _) =>
+            {
+                StopAudio();
+                StopVideo();
+            };
             ReportNativeLibraries();
         }
 
@@ -1471,6 +1476,7 @@ namespace AssetStudio.Avalonia.Views
         private void ClearPreview()
         {
             StopAudio();
+            StopVideo();
             imagePreviewHost.IsVisible = false;
             meshPreviewHost.IsVisible = false;
             StopAnimation();
@@ -1576,9 +1582,12 @@ namespace AssetStudio.Avalonia.Views
                     case Mesh m_Mesh:
                         PreviewMesh(assetItem, m_Mesh);
                         break;
-                    case VideoClip _:
-                    case MovieTexture _:
-                        StatusStripUpdate("Only supported export.");
+                    case VideoClip m_VideoClip:
+                        await PreviewVideo(assetItem, () => m_VideoClip.m_ExternalResources.m_Size > 0 ? m_VideoClip.m_VideoData.GetData() : null,
+                            string.IsNullOrEmpty(Path.GetExtension(m_VideoClip.m_OriginalPath)) ? ".mp4" : Path.GetExtension(m_VideoClip.m_OriginalPath));
+                        break;
+                    case MovieTexture m_MovieTexture:
+                        await PreviewVideo(assetItem, () => m_MovieTexture.m_MovieData, ".ogv");
                         break;
                     case Sprite m_Sprite:
                         await PreviewSprite(assetItem, m_Sprite);
@@ -2460,6 +2469,182 @@ namespace AssetStudio.Avalonia.Views
             Settings.Default.Save();
             ScheduleMeshRender();
         }
+
+        #region Video
+
+        private VideoPlayer videoPlayer;
+        private string videoTempFile;
+        private DispatcherTimer videoTimer;
+        private byte[] videoPixels;
+        private WriteableBitmap videoBitmap;
+        private bool updatingVideoSlider;
+
+        private async Task PreviewVideo(AssetItem assetItem, Func<byte[]> getData, string extension)
+        {
+            var data = await Task.Run(getData);
+            if (assetItem != lastSelectedItem)
+                return;
+            if (data == null || data.Length == 0)
+            {
+                StatusStripUpdate("The video data of this clip is missing (its resource file is not loaded)");
+                return;
+            }
+            StopVideo();
+            videoTempFile = Path.Combine(Path.GetTempPath(), $"assetstudio_video_{Environment.ProcessId}{extension}");
+            await File.WriteAllBytesAsync(videoTempFile, data);
+            if (assetItem != lastSelectedItem)
+                return;
+            assetItem.InfoText = $"Format: {extension.TrimStart('.')}\nSize: {data.Length} bytes";
+            videoPanel.IsVisible = true;
+            videoImage.Source = null;
+            ShowInfo(assetItem);
+            if (!VideoPlayer.IsAvailable)
+            {
+                videoMessage.Text = "In-app video preview needs GStreamer (gstreamer1.0-plugins-base / -good / -libav).\nUse Open externally to play it with the default player.";
+                return;
+            }
+            videoMessage.Text = "";
+            videoPlayer = VideoPlayer.Open(videoTempFile);
+            if (videoPlayer == null || videoPlayer.Error != null)
+            {
+                videoMessage.Text = $"Unable to play this video: {videoPlayer?.Error ?? "GStreamer"}";
+                return;
+            }
+            videoPlayer.Loop = videoLoopCheckBox.IsChecked == true;
+            videoPlayer.SetVolume(videoVolumeSlider.Value);
+            videoTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(15), DispatcherPriority.Render, VideoTimer_Tick);
+            videoTimer.Start();
+            UpdateVideoControls();
+            StatusStripUpdate("Video preview (GStreamer)");
+        }
+
+        private void InitializeVideoControls()
+        {
+            videoSlider.ValueChanged += (_, e) =>
+            {
+                if (!updatingVideoSlider && videoPlayer != null)
+                    videoPlayer.Seek(TimeSpan.FromSeconds(e.NewValue));
+            };
+            videoVolumeSlider.ValueChanged += (_, e) => videoPlayer?.SetVolume(e.NewValue);
+        }
+
+        private void VideoTimer_Tick(object sender, EventArgs e)
+        {
+            var player = videoPlayer;
+            if (player == null || !videoPanel.IsVisible)
+            {
+                videoTimer?.Stop();
+                return;
+            }
+            player.Poll();
+            if (player.Error != null)
+            {
+                videoMessage.Text = $"Unable to play this video: {player.Error}";
+                videoTimer.Stop();
+                return;
+            }
+            if (player.TryGetFrame(ref videoPixels, out var width, out var height))
+            {
+                if (videoBitmap == null || videoBitmap.PixelSize.Width != width || videoBitmap.PixelSize.Height != height)
+                {
+                    videoBitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
+                }
+                using (var fb = videoBitmap.Lock())
+                {
+                    for (int y = 0; y < height; y++)
+                        Marshal.Copy(videoPixels, y * width * 4, fb.Address + y * fb.RowBytes, width * 4);
+                }
+                videoImage.Source = null;
+                videoImage.Source = videoBitmap;
+                if (lastSelectedItem != null && !lastSelectedItem.InfoText.Contains("Resolution"))
+                {
+                    lastSelectedItem.InfoText += $"\nResolution: {width} x {height}";
+                    ShowInfo(lastSelectedItem);
+                }
+            }
+            UpdateVideoControls();
+        }
+
+        private void UpdateVideoControls()
+        {
+            var player = videoPlayer;
+            var duration = player?.Duration ?? TimeSpan.Zero;
+            var position = player?.Position ?? TimeSpan.Zero;
+            updatingVideoSlider = true;
+            videoSlider.Maximum = Math.Max(duration.TotalSeconds, 0.001);
+            videoSlider.Value = Math.Min(position.TotalSeconds, videoSlider.Maximum);
+            updatingVideoSlider = false;
+            videoTimeLabel.Text = $"{position:m\\:ss\\.f} / {duration:m\\:ss\\.f}";
+            videoPlayButton.Content = player?.IsPlaying == true ? "Pause" : "Play";
+        }
+
+        private void VideoPlay_Click(object sender, RoutedEventArgs e)
+        {
+            if (videoPlayer == null)
+                return;
+            if (videoPlayer.IsPlaying)
+                videoPlayer.Pause();
+            else
+                videoPlayer.Play();
+            videoTimer?.Start();
+            UpdateVideoControls();
+        }
+
+        private void VideoStop_Click(object sender, RoutedEventArgs e)
+        {
+            if (videoPlayer == null)
+                return;
+            videoPlayer.Pause();
+            videoPlayer.Seek(TimeSpan.Zero);
+            UpdateVideoControls();
+        }
+
+        private void VideoLoop_Click(object sender, RoutedEventArgs e)
+        {
+            if (videoPlayer != null)
+                videoPlayer.Loop = videoLoopCheckBox.IsChecked == true;
+        }
+
+        private void VideoOpenExternal_Click(object sender, RoutedEventArgs e)
+        {
+            if (videoTempFile == null || !File.Exists(videoTempFile))
+                return;
+            videoPlayer?.Pause();
+            //a copy the external player keeps while the preview moves on
+            var copy = Path.Combine(Path.GetTempPath(), $"assetstudio_video_{Environment.ProcessId}_{DateTime.Now.Ticks}{Path.GetExtension(videoTempFile)}");
+            File.Copy(videoTempFile, copy, true);
+            try
+            {
+                var info = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
+                info.ArgumentList.Add(copy);
+                Process.Start(info)?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Unable to open the video: {ex.Message}");
+            }
+        }
+
+        private void StopVideo()
+        {
+            videoTimer?.Stop();
+            videoPlayer?.Dispose();
+            videoPlayer = null;
+            videoPanel.IsVisible = false;
+            videoImage.Source = null;
+            videoMessage.Text = "";
+            try
+            {
+                if (videoTempFile != null && File.Exists(videoTempFile))
+                    File.Delete(videoTempFile);
+            }
+            catch (IOException)
+            {
+            }
+            videoTempFile = null;
+        }
+
+        #endregion
 
         #region Blend shapes
 
