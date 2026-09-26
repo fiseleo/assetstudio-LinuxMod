@@ -13,6 +13,7 @@ public static class TypeFlags
         { ClassIDType.Texture2DArray, (true, true) },
         { ClassIDType.Texture3D, (true, true) },
         { ClassIDType.CubemapArray, (true, true) },
+        { ClassIDType.TerrainData, (true, true) },
     };
 
     /// <summary>

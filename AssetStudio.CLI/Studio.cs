@@ -356,6 +356,10 @@ namespace AssetStudio.CLI
                 case Animator _ when ClassIDType.Animator.CanExport():
                     exportable = true;
                     break;
+                case Object _ when asset.type == ClassIDType.TerrainData && ClassIDType.TerrainData.CanExport():
+                    assetItem.Text = asset.PeekName();
+                    exportable = true;
+                    break;
                 default: //any other class asked for with --types, exported from its type tree
                     exportable = asset.type.CanExport() && asset.type != ClassIDType.UnknownType;
                     break;

@@ -327,6 +327,10 @@ namespace AssetStudio.Avalonia
                         case MonoBehaviour _ when ClassIDType.MonoBehaviour.CanExport():
                             exportable = true;
                             break;
+                        case Object _ when asset.type == ClassIDType.TerrainData: //read through its type tree
+                            assetItem.Text = asset.PeekName();
+                            exportable = ClassIDType.TerrainData.CanExport();
+                            break;
                     }
                     if (assetItem.Text == "")
                     {

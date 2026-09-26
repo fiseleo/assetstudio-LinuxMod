@@ -59,6 +59,29 @@ namespace AssetStudio
             return TypeTreeDatabase.GetTypeTree((int)type, version, assetsFile?.buildType);
         }
 
+        /// <summary>
+        /// m_Name of an object of a named class that has no reader of its own (it is the first field).
+        /// </summary>
+        public string PeekName()
+        {
+            lock (reader.BaseStream)
+            {
+                try
+                {
+                    reader.Reset();
+                    if (platform == BuildTarget.NoTarget)
+                    {
+                        reader.ReadUInt32(); //m_ObjectHideFlags
+                    }
+                    return reader.ReadAlignedString();
+                }
+                catch (System.Exception)
+                {
+                    return "";
+                }
+            }
+        }
+
         public string Dump()
         {
             var m_Type = GetTypeTree();

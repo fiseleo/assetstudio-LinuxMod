@@ -1542,6 +1542,9 @@ namespace AssetStudio.Avalonia.Views
                     case GameObject m_GameObject:
                         PreviewGameObject(assetItem, m_GameObject);
                         break;
+                    case Object m_Object when m_Object.type == ClassIDType.TerrainData:
+                        await PreviewTerrainData(assetItem, m_Object);
+                        break;
                     default:
                         await PreviewTextAsync(assetItem, () => assetItem.Asset.Dump());
                         break;
@@ -1565,6 +1568,34 @@ namespace AssetStudio.Avalonia.Views
             }
             textPreviewBox.Text = text;
             textPreviewBox.IsVisible = true;
+            ShowInfo(assetItem);
+        }
+
+        private async Task PreviewTerrainData(AssetItem assetItem, Object terrainData)
+        {
+            var result = await Task.Run(() =>
+            {
+                var type = terrainData.ToType();
+                if (!TerrainDataConverter.TryGetHeightmap(type, out var heights, out var width, out var height))
+                    return ((byte[])null, 0, 0, (object)null);
+                using var image = TerrainDataConverter.ToPreviewImage(heights, width, height);
+                return (image.ConvertToBytes(), width, height, ((System.Collections.Specialized.OrderedDictionary)type["m_Heightmap"])["m_Scale"]);
+            });
+            if (assetItem != lastSelectedItem)
+                return;
+            var (bytes, w, h, scale) = result;
+            if (bytes == null)
+            {
+                await PreviewTextAsync(assetItem, () => terrainData.Dump());
+                return;
+            }
+            var info = $"Heightmap: {w} x {h}";
+            if (scale is System.Collections.Specialized.OrderedDictionary s)
+            {
+                info += $"\nSample spacing: {s["x"]} x {s["z"]}\nHeight scale: {s["y"]}";
+            }
+            assetItem.InfoText = info;
+            ShowBitmap(bytes, w, h);
             ShowInfo(assetItem);
         }
 

@@ -593,8 +593,23 @@ namespace AssetStudio.Avalonia
                 case ClassIDType.Material:
                     return ExportJSONFile(item, exportPath);
                 default:
-                    return ExportTypeTreeOrRawFile(item, exportPath);
+                    return item.Type == ClassIDType.TerrainData ? ExportTerrainData(item, exportPath) : ExportTypeTreeOrRawFile(item, exportPath);
             }
+        }
+
+        // The heightmap as a 16-bit PNG and as Unity's terrain RAW, and all the fields as JSON
+        public static bool ExportTerrainData(AssetItem item, string exportPath)
+        {
+            var type = item.Asset.ToType();
+            if (!TerrainDataConverter.TryGetHeightmap(type, out var heights, out var width, out var height))
+                return ExportTypeTreeOrRawFile(item, exportPath);
+            if (!TryExportFile(exportPath, item, ".png", out var exportFullPath))
+                return false;
+            TerrainDataConverter.SaveAsPng(heights, width, height, exportFullPath);
+            var basePath = Path.ChangeExtension(exportFullPath, null);
+            File.WriteAllBytes(basePath + ".raw", TerrainDataConverter.ToRaw(heights));
+            File.WriteAllText(basePath + ".json", JsonConvert.SerializeObject(type, Formatting.Indented));
+            return true;
         }
 
         // The classes without a converter: their fields from the type tree (of the file, or the type tree database) as JSON
