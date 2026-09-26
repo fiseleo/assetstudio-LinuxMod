@@ -1,3 +1,4 @@
+﻿using System.Text.RegularExpressions;
 using System.Text;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -249,6 +250,67 @@ namespace AssetStudio.Tests
             var text = Assert.IsType<TextAsset>(Assert.Single(file.Objects));
             Assert.Equal("readme", text.m_Name);
             Assert.Equal("hello from 6000.6", Encoding.UTF8.GetString(text.m_Script));
+        }
+    }
+
+    public class AssetMapTests
+    {
+        private static readonly AssetEntry[] Entries =
+        {
+            new AssetEntry { Name = "hero", Container = "Assets/Characters/Hero.prefab", Source = "characters.bundle", PathID = 1, Type = ClassIDType.GameObject, Address = "Hero" },
+            new AssetEntry { Name = "logo", Container = "Assets/UI/logo.png", Source = "ui.bundle", PathID = -2, Type = ClassIDType.Texture2D },
+        };
+
+        [Theory]
+        [InlineData(ExportListType.XML, "xml")]
+        [InlineData(ExportListType.JSON, "json")]
+        [InlineData(ExportListType.MessagePack, "map")]
+        public void ContainerFilters_MatchAddresses(ExportListType type, string extension)
+        {
+            var folder = TestUtil.TempDirectory();
+            AssetsHelper.ExportAssetsMap(Entries.ToList(), GameManager.GetGame(GameType.Normal), "map", folder, type).Wait();
+            var map = Path.Combine(folder, $"map.{extension}");
+            string[] Parse(params string[] containers) =>
+                AssetsHelper.ParseAssetMap(map, type, Array.Empty<ClassIDType>(), Array.Empty<Regex>(), containers.Select(x => new Regex(x)).ToArray()).OrderBy(x => x).ToArray();
+
+            Assert.Equal(new[] { "characters.bundle", "ui.bundle" }, Parse());
+            Assert.Equal(new[] { "characters.bundle" }, Parse("^Hero$")); //the address
+            Assert.Equal(new[] { "ui.bundle" }, Parse("logo"));
+            Assert.Empty(Parse("^Logo$"));
+        }
+
+        [Fact]
+        public void Address_IsOnlyWrittenWhenKnown()
+        {
+            var folder = TestUtil.TempDirectory();
+            AssetsHelper.ExportAssetsMap(Entries.ToList(), GameManager.GetGame(GameType.Normal), "map", folder, ExportListType.XML | ExportListType.JSON).Wait();
+            var xml = File.ReadAllText(Path.Combine(folder, "map.xml"));
+            Assert.Equal(1, Regex.Matches(xml, "<Address>").Count);
+            var json = JArray.Parse(File.ReadAllText(Path.Combine(folder, "map.json")));
+            Assert.Equal("Hero", (string)json[0]["Address"]);
+            Assert.Null(json[1]["Address"]);
+        }
+
+        [Fact]
+        public void OldMaps_StillLoad()
+        {
+            var folder = TestUtil.TempDirectory();
+            //XML written before the Address element
+            var xml = Path.Combine(folder, "old.xml");
+            File.WriteAllText(xml, "<?xml version=\"1.0\" encoding=\"utf-8\"?><Assets filename=\"old.xml\" createdAt=\"2024-01-01T00:00:00\">" +
+                "<Asset><Name>a</Name><Container>Assets/a.png</Container><Type id=\"28\">Texture2D</Type><PathID>1</PathID><Source>a.bundle</Source></Asset>" +
+                "<Asset><Name>b</Name><Container>Assets/b.prefab</Container><Type id=\"1\">GameObject</Type><PathID>2</PathID><Source>b.bundle</Source></Asset></Assets>");
+            Assert.Equal(new[] { "b.bundle" }, AssetsHelper.ParseAssetMap(xml, ExportListType.XML, new[] { ClassIDType.GameObject }, Array.Empty<Regex>(), Array.Empty<Regex>()));
+            Assert.Equal(new[] { "a.bundle", "b.bundle" }, AssetsHelper.ParseAssetMap(xml, ExportListType.XML, Array.Empty<ClassIDType>(), Array.Empty<Regex>(), Array.Empty<Regex>()).OrderBy(x => x));
+
+            //MessagePack entries of five keys
+            var options = MessagePack.MessagePackSerializerOptions.Standard.WithCompression(MessagePack.MessagePackCompression.Lz4BlockArray);
+            var old = new object[] { (int)GameType.Normal, new[] { new object[] { "a", "Assets/a.png", "a.bundle", 1L, (int)ClassIDType.Texture2D } } };
+            var bytes = MessagePack.MessagePackSerializer.Serialize(old, options);
+            var map = MessagePack.MessagePackSerializer.Deserialize<AssetMap>(bytes, options);
+            Assert.Equal("Assets/a.png", map.AssetEntries[0].Container);
+            Assert.Equal(ClassIDType.Texture2D, map.AssetEntries[0].Type);
+            Assert.Null(map.AssetEntries[0].Address);
         }
     }
 }

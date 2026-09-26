@@ -8,6 +8,7 @@ using Newtonsoft.Json.Converters;
 using Newtonsoft.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
+using System.Xml.Linq;
 using System.Text;
 using MessagePack;
 using System.Threading.Tasks;
@@ -319,6 +320,7 @@ namespace AssetStudio
             try
             {
                 Progress.Reset();
+                assetsManager.ClearCatalogs(); //the catalogs of the previous build
                 assetsManager.Game = game;
                 var assets = new List<AssetEntry>();
                 foreach (var file in LoadFiles(files))
@@ -492,7 +494,9 @@ namespace AssetStudio
             {
                 if (pptr.TryGet(out var obj))
                 {
-                    objectAssetItemDic[obj].Container = container;
+                    var entry = objectAssetItemDic[obj];
+                    entry.Container = container;
+                    entry.Address = assetsManager.FindAddressablesLocation(container, obj.assetsFile)?.PrimaryKey;
                 }
             }
 
@@ -500,7 +504,8 @@ namespace AssetStudio
             {
                 var isMatchRegex = nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Name));
                 var isFilteredType = typeFilters.IsNullOrEmpty() || typeFilters.Contains(x.Type);
-                var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container));
+                //containers filters also match Addressables addresses
+                var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container) || (x.Address != null && y.IsMatch(x.Address)));
                 return isMatchRegex && isFilteredType && isContainerMatch;
             }));
         }
@@ -518,7 +523,7 @@ namespace AssetStudio
                         foreach(var entry in assetMap.AssetEntries)
                         {
                             var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
-                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container));
+                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container) || (entry.Address != null && x.IsMatch(entry.Address)));
                             var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
                             if (isNameMatch && isContainerMatch && isTypeMatch)
                             {
@@ -532,38 +537,27 @@ namespace AssetStudio
                     {
                         using var stream = File.OpenRead(mapName);
                         using var reader = XmlReader.Create(stream);
-                        reader.ReadToFollowing("Assets");
-                        reader.ReadToFollowing("Asset");
-                        do
+                        reader.MoveToContent();
+                        reader.ReadToDescendant("Asset");
+                        while (reader.NodeType == XmlNodeType.Element && reader.Name == "Asset")
                         {
-                            reader.ReadToFollowing("Name");
-                            var name = reader.ReadInnerXml();
+                            var asset = (XElement)XNode.ReadFrom(reader);
+                            var name = asset.Element("Name")?.Value ?? string.Empty;
+                            var container = asset.Element("Container")?.Value ?? string.Empty;
+                            var type = asset.Element("Type")?.Value ?? string.Empty;
+                            var source = asset.Element("Source")?.Value ?? string.Empty;
+                            var address = asset.Element("Address")?.Value; //only in maps built with Addressables catalogs
 
                             var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(name));
-
-                            reader.ReadToFollowing("Container");
-                            var container = reader.ReadInnerXml();
-
-                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(container));
-
-                            reader.ReadToFollowing("Type");
-                            var type = reader.ReadInnerXml();
-
+                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(container) || (address != null && x.IsMatch(address)));
                             var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x.ToString().Equals(type, StringComparison.OrdinalIgnoreCase));
-
-                            reader.ReadToFollowing("PathID");
-                            var pathID = reader.ReadInnerXml();
-
-                            reader.ReadToFollowing("Source");
-                            var source = reader.ReadInnerXml();
-
                             if (isNameMatch && isContainerMatch && isTypeMatch)
                             {
                                 matches.Add(source);
                             }
 
-                            reader.ReadEndElement();
-                        } while (reader.ReadToNextSibling("Asset"));
+                            reader.MoveToContent();
+                        }
                     }
 
                     break;
@@ -580,7 +574,7 @@ namespace AssetStudio
                         foreach (var entry in entries)
                         {
                             var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
-                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container));
+                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container) || (entry.Address != null && x.IsMatch(entry.Address)));
                             var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
                             if (isNameMatch && isContainerMatch && isTypeMatch)
                             {
@@ -624,7 +618,7 @@ namespace AssetStudio
             }
         }
 
-        private static Task ExportAssetsMap(List<AssetEntry> toExportAssets, Game game, string name, string savePath, ExportListType exportListType)
+        public static Task ExportAssetsMap(List<AssetEntry> toExportAssets, Game game, string name, string savePath, ExportListType exportListType)
         {
             return Task.Run(() =>
             {
@@ -659,6 +653,10 @@ namespace AssetStudio
                             writer.WriteEndElement();
                             writer.WriteElementString("PathID", asset.PathID.ToString());
                             writer.WriteElementString("Source", asset.Source);
+                            if (!string.IsNullOrEmpty(asset.Address))
+                            {
+                                writer.WriteElementString("Address", asset.Address);
+                            }
                             writer.WriteEndElement();
                         }
                         writer.WriteEndElement();
@@ -692,6 +690,7 @@ namespace AssetStudio
         {
             Logger.Info($"Building Both...");
             CABMap.Clear();
+            assetsManager.ClearCatalogs(); //the catalogs of the previous build
             Progress.Reset();
             var collision = 0;
             BaseFolder = baseFolder;

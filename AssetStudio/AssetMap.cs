@@ -1,4 +1,5 @@
 ﻿using MessagePack;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -27,6 +28,10 @@ namespace AssetStudio
         public long PathID { get; set; }
         [Key(4)]
         public ClassIDType Type { get; set; }
+        /// <summary>The Addressables address (primary key) of the asset; null when no catalog locates it (older maps too).</summary>
+        [Key(5)]
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public string Address { get; set; }
 
         public bool Matches(Dictionary<string, Regex> filters)
         {
@@ -40,6 +45,7 @@ namespace AssetStudio
                     string value when value.Equals(nameof(Source), StringComparison.OrdinalIgnoreCase) => filter.Value.IsMatch(Source),
                     string value when value.Equals(nameof(PathID), StringComparison.OrdinalIgnoreCase) => filter.Value.IsMatch(PathID.ToString()),
                     string value when value.Equals(nameof (Type), StringComparison.OrdinalIgnoreCase) => filter.Value.IsMatch(Type.ToString()),
+                    string value when value.Equals(nameof(Address), StringComparison.OrdinalIgnoreCase) => filter.Value.IsMatch(Address ?? string.Empty),
                     _ => throw new NotImplementedException()
                 });
             }

@@ -497,6 +497,10 @@ namespace AssetStudio.CLI
                             writer.WriteEndElement();
                             writer.WriteElementString("PathID", asset.PathID.ToString());
                             writer.WriteElementString("Source", asset.Source);
+                            if (!string.IsNullOrEmpty(asset.Address))
+                            {
+                                writer.WriteElementString("Address", asset.Address);
+                            }
                             writer.WriteEndElement();
                         }
                         writer.WriteEndElement();
