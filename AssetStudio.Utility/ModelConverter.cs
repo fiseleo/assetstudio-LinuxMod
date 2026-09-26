@@ -707,7 +707,7 @@ namespace AssetStudio
                 iMat.Textures = new List<ImportedMaterialTexture>();
                 foreach (var texEnv in mat.m_SavedProperties.m_TexEnvs)
                 {
-                    if (!texEnv.Value.m_Texture.TryGet<Texture2D>(out var m_Texture2D)) //TODO other Texture
+                    if (!texEnv.Value.m_Texture.TryGet<Texture2D>(out var m_Texture2D) || m_Texture2D is Cubemap) //TODO other Texture
                     {
                         continue;
                     }

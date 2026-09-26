@@ -8,6 +8,9 @@ namespace AssetStudio
     public class Texture2DConverter
     {
         private ResourceReader reader;
+        private byte[] data; //or a part of it, when decoding one image of a texture with several
+        private int dataOffset;
+        private int dataSize;
         private int m_Width;
         private int m_Height;
         private TextureFormat m_TextureFormat;
@@ -24,19 +27,40 @@ namespace AssetStudio
             version = m_Texture2D.version;
             platform = m_Texture2D.platform;
             outPutSize = m_Width * m_Height * 4;
+            dataSize = reader.Size;
+        }
+
+        public Texture2DConverter(byte[] data, int offset, int size, int width, int height, TextureFormat textureFormat, int[] version, BuildTarget platform)
+        {
+            this.data = data;
+            dataOffset = offset;
+            dataSize = size;
+            m_Width = width;
+            m_Height = height;
+            m_TextureFormat = textureFormat;
+            this.version = version;
+            this.platform = platform;
+            outPutSize = m_Width * m_Height * 4;
         }
 
         public bool DecodeTexture2D(byte[] bytes)
         {
-            if (reader.Size == 0 || m_Width == 0 || m_Height == 0)
+            if (dataSize <= 0 || m_Width == 0 || m_Height == 0)
             {
                 return false;
             }
             var flag = false;
-            var buff = ArrayPool<byte>.Shared.Rent(reader.Size);
+            var buff = ArrayPool<byte>.Shared.Rent(dataSize);
             try
             {
-                reader.GetData(buff);
+                if (data != null)
+                {
+                    Buffer.BlockCopy(data, dataOffset, buff, 0, Math.Min(dataSize, data.Length - dataOffset));
+                }
+                else
+                {
+                    reader.GetData(buff);
+                }
                 switch (m_TextureFormat)
                 {
                     case TextureFormat.Alpha8: //test pass
@@ -226,7 +250,7 @@ namespace AssetStudio
         {
             if (platform == BuildTarget.XBOX360)
             {
-                for (var i = 0; i < reader.Size / 2; i++)
+                for (var i = 0; i < dataSize / 2; i++)
                 {
                     var b = image_data[i * 2];
                     image_data[i * 2] = image_data[i * 2 + 1];

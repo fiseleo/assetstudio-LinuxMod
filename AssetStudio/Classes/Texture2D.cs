@@ -58,16 +58,19 @@ namespace AssetStudio
         }
     }
 
-    public sealed class Texture2D : Texture
+    public class Texture2D : Texture
     {
         public int m_Width;
         public int m_Height;
+        public int m_CompleteImageSize;
+        public int m_ImageCount;
         public TextureFormat m_TextureFormat;
         public bool m_MipMap;
         public int m_MipCount;
         public GLTextureSettings m_TextureSettings;
         public ResourceReader image_data;
         public StreamingInfo m_StreamData;
+        protected long m_ImageDataEnd; // position after the inline image data, 0 when streamed
 
         private static bool HasGNFTexture(SerializedType type) => type.Match("1D52BB98AA5F54C67C22C39E8B2E400F");
         private static bool HasExternalMipRelativeOffset(SerializedType type) => type.Match("1D52BB98AA5F54C67C22C39E8B2E400F", "5390A985F58D5524F95DB240E8789704");
@@ -84,7 +87,7 @@ namespace AssetStudio
             m_Width = reader.ReadInt32();
             m_Height = reader.ReadInt32();
 
-            var m_CompleteImageSize = reader.ReadInt32();
+            m_CompleteImageSize = reader.ReadInt32();
             if (version[0] >= 2020) //2020.1 and up
             {
                 var m_MipsStripped = reader.ReadInt32();
@@ -141,7 +144,7 @@ namespace AssetStudio
             {
                 var m_StreamingMipmapsPriority = reader.ReadInt32();
             }
-            var m_ImageCount = reader.ReadInt32();
+            m_ImageCount = reader.ReadInt32();
             var m_TextureDimension = reader.ReadInt32();
             m_TextureSettings = new GLTextureSettings(reader);
             if (version[0] >= 3) //3.0 and up
@@ -190,6 +193,7 @@ namespace AssetStudio
             else
             {
                 resourceReader = new ResourceReader(reader, reader.BaseStream.Position, image_data_size);
+                m_ImageDataEnd = reader.BaseStream.Position + image_data_size;
             }
             image_data = resourceReader;
         }

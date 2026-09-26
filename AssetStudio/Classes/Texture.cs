@@ -23,5 +23,34 @@ namespace AssetStudio
                 reader.AlignStream();
             }
         }
+
+        /// <summary>
+        /// Whether the object has a field: from the type tree when there is one (it also covers alpha versions), else from the version.
+        /// </summary>
+        protected static bool HasField(ObjectReader reader, string fieldName, bool byVersion)
+        {
+            var nodes = reader.serializedType?.m_Type?.m_Nodes;
+            if (nodes == null || nodes.Count == 0)
+                return byVersion;
+            return nodes.Exists(x => x.m_Level == 1 && x.m_Name == fieldName);
+        }
+
+        protected ResourceReader ReadImageData(ObjectReader reader, out StreamingInfo streamData)
+        {
+            var image_data_size = reader.ReadInt32();
+            var offset = reader.BaseStream.Position;
+            reader.Position += image_data_size;
+            reader.AlignStream();
+            streamData = null;
+            if (version[0] > 5 || (version[0] == 5 && version[1] >= 6)) //5.6 and up
+            {
+                streamData = new StreamingInfo(reader);
+            }
+            if (!string.IsNullOrEmpty(streamData?.path))
+            {
+                return new ResourceReader(streamData.path, assetsFile, streamData.offset, streamData.size);
+            }
+            return new ResourceReader(reader, offset, image_data_size);
+        }
     }
 }

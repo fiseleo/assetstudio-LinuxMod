@@ -39,6 +39,50 @@ namespace AssetStudio.CLI
             }
         }
 
+        // Cubemap: one horizontal cross. Texture2DArray, Texture3D: a folder with an image per slice. CubemapArray: a folder with a cross per cube.
+        public static bool ExportTextureImages(AssetItem item, string exportPath, ImageFormat imageFormat = ImageFormat.Png)
+        {
+            var m_Texture = (Texture)item.Asset;
+            if (!Properties.Settings.Default.convertTexture)
+            {
+                if (!TryExportFile(exportPath, item, ".tex", out var rawPath))
+                    return false;
+                File.WriteAllBytes(rawPath, m_Texture.GetImageData().GetData());
+                return true;
+            }
+            var extension = "." + imageFormat.ToString().ToLower();
+            if (m_Texture is Cubemap)
+            {
+                if (!TryExportFile(exportPath, item, extension, out var exportFullPath))
+                    return false;
+                var (_, cross) = m_Texture.ConvertToExportImages(true).FirstOrDefault();
+                if (cross == null)
+                    return false;
+                using (cross)
+                using (var file = File.OpenWrite(exportFullPath))
+                {
+                    cross.WriteToStream(file, imageFormat);
+                }
+                return true;
+            }
+            if (!TryExportFolder(exportPath, item, out var folder))
+                return false;
+            var exported = false;
+            foreach (var (index, image) in m_Texture.ConvertToExportImages(true))
+            {
+                using (image)
+                {
+                    Directory.CreateDirectory(folder);
+                    using (var file = File.OpenWrite(Path.Combine(folder, index + extension)))
+                    {
+                        image.WriteToStream(file, imageFormat);
+                    }
+                    exported = true;
+                }
+            }
+            return exported;
+        }
+
         public static bool ExportAudioClip(AssetItem item, string exportPath)
         {
             var m_AudioClip = (AudioClip)item.Asset;
@@ -492,6 +536,11 @@ namespace AssetStudio.CLI
                     return ExportGameObject(item, exportPath);
                 case ClassIDType.Texture2D:
                     return ExportTexture2D(item, exportPath, imageFormat);
+                case ClassIDType.Cubemap:
+                case ClassIDType.Texture2DArray:
+                case ClassIDType.Texture3D:
+                case ClassIDType.CubemapArray:
+                    return ExportTextureImages(item, exportPath, imageFormat);
                 case ClassIDType.AudioClip:
                     return ExportAudioClip(item, exportPath);
                 case ClassIDType.Shader:

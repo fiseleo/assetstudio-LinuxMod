@@ -52,7 +52,7 @@ namespace AssetStudio.Avalonia.Views
             keyTextBox.Text = s.key.ToString("X2");
             minimalAssetMap.IsChecked = s.minimalAssetMap;
 
-            types = JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(s.types) ?? new Dictionary<ClassIDType, (bool, bool)>();
+            types = TypeFlags.WithAddedTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(s.types));
             uvs = JsonConvert.DeserializeObject<Dictionary<string, (bool, int)>>(s.uvs) ?? new Dictionary<string, (bool, int)>();
             texs = (string.IsNullOrEmpty(s.texs) ? null : JsonConvert.DeserializeObject<Dictionary<string, int>>(s.texs)) ?? new Dictionary<string, int>();
 

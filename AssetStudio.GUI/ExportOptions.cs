@@ -48,7 +48,7 @@ namespace AssetStudio.GUI
             encrypted.Checked = Properties.Settings.Default.encrypted;
             key.Value = Properties.Settings.Default.key;
             minimalAssetMap.Checked = Properties.Settings.Default.minimalAssetMap;
-            types = JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Properties.Settings.Default.types);
+            types = TypeFlags.WithAddedTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Properties.Settings.Default.types));
             uvs = JsonConvert.DeserializeObject<Dictionary<string, (bool, int)>>(Properties.Settings.Default.uvs);
 
             texTypeComboBox.SelectedIndex = 0;

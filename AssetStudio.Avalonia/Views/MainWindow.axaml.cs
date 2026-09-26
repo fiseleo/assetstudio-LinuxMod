@@ -1472,8 +1472,11 @@ namespace AssetStudio.Avalonia.Views
             {
                 switch (assetItem.Asset)
                 {
+                    case Texture m_Texture when m_Texture.HasImages():
+                        await PreviewTexture(assetItem, m_Texture);
+                        break;
                     case Texture2D m_Texture2D:
-                        await PreviewTexture2D(assetItem, m_Texture2D);
+                        await PreviewTexture(assetItem, m_Texture2D);
                         break;
                     case AudioClip m_AudioClip:
                         PreviewAudioClip(assetItem, m_AudioClip);
@@ -1565,12 +1568,13 @@ namespace AssetStudio.Avalonia.Views
             ShowInfo(assetItem);
         }
 
-        private async Task PreviewTexture2D(AssetItem assetItem, Texture2D m_Texture2D)
+        // Texture2D, or the faces / slices of a Cubemap, Texture2DArray, Texture3D, CubemapArray side by side
+        private async Task PreviewTexture(AssetItem assetItem, Texture m_Texture)
         {
             var channels = (bool[])textureChannels.Clone();
             var result = await Task.Run(() =>
             {
-                var image = m_Texture2D.ConvertToImage(true);
+                var image = m_Texture.HasImages() ? m_Texture.ConvertToPreview(true) : ((Texture2D)m_Texture).ConvertToImage(true);
                 if (image == null)
                     return ((byte[])null, 0, 0);
                 using (image)
@@ -1587,15 +1591,43 @@ namespace AssetStudio.Avalonia.Views
                 return;
             }
             var info = new StringBuilder();
-            info.Append($"Width: {m_Texture2D.m_Width}\nHeight: {m_Texture2D.m_Height}\nFormat: {m_Texture2D.m_TextureFormat}");
-            switch (m_Texture2D.m_TextureSettings.m_FilterMode)
+            GLTextureSettings settings;
+            switch (m_Texture)
+            {
+                case Texture2DArray m_Texture2DArray:
+                    info.Append($"Width: {m_Texture2DArray.m_Width}\nHeight: {m_Texture2DArray.m_Height}\nSlices: {m_Texture2DArray.m_Depth}");
+                    info.Append($"\nFormat: {FormatName(m_Texture2DArray.m_GraphicsFormat, m_Texture2DArray.m_TextureFormat)}\nMip count: {m_Texture2DArray.m_MipCount}");
+                    settings = m_Texture2DArray.m_TextureSettings;
+                    break;
+                case Texture3D m_Texture3D:
+                    info.Append($"Width: {m_Texture3D.m_Width}\nHeight: {m_Texture3D.m_Height}\nDepth: {m_Texture3D.m_Depth}");
+                    info.Append($"\nFormat: {FormatName(m_Texture3D.m_GraphicsFormat, m_Texture3D.m_TextureFormat)}\nMip count: {m_Texture3D.m_MipCount}");
+                    settings = m_Texture3D.m_TextureSettings;
+                    break;
+                case CubemapArray m_CubemapArray:
+                    info.Append($"Face size: {m_CubemapArray.m_Width}\nCubemaps: {m_CubemapArray.m_CubemapCount}");
+                    info.Append($"\nFormat: {FormatName(m_CubemapArray.m_GraphicsFormat, m_CubemapArray.m_TextureFormat)}\nMip count: {m_CubemapArray.m_MipCount}");
+                    settings = m_CubemapArray.m_TextureSettings;
+                    break;
+                default:
+                    var m_Texture2D = (Texture2D)m_Texture;
+                    info.Append(m_Texture2D is Cubemap ? $"Face size: {m_Texture2D.m_Width}" : $"Width: {m_Texture2D.m_Width}\nHeight: {m_Texture2D.m_Height}");
+                    info.Append($"\nFormat: {m_Texture2D.m_TextureFormat}");
+                    settings = m_Texture2D.m_TextureSettings;
+                    break;
+            }
+            if (m_Texture.HasImages() && m_Texture.GetImageCount() > (m_Texture.IsCubemap() ? 6 : 1) && width * height > 0)
+            {
+                info.Append(m_Texture.IsCubemap() ? "\nShown: each cubemap as a cross" : "\nShown: every slice, in order");
+            }
+            switch (settings.m_FilterMode)
             {
                 case 0: info.Append("\nFilter Mode: Point "); break;
                 case 1: info.Append("\nFilter Mode: Bilinear "); break;
                 case 2: info.Append("\nFilter Mode: Trilinear "); break;
             }
-            info.Append($"\nAnisotropic level: {m_Texture2D.m_TextureSettings.m_Aniso}\nMip map bias: {m_Texture2D.m_TextureSettings.m_MipBias}");
-            switch (m_Texture2D.m_TextureSettings.m_WrapMode)
+            info.Append($"\nAnisotropic level: {settings.m_Aniso}\nMip map bias: {settings.m_MipBias}");
+            switch (settings.m_WrapMode)
             {
                 case 0: info.Append("\nWrap mode: Repeat"); break;
                 case 1: info.Append("\nWrap mode: Clamp"); break;
@@ -1620,6 +1652,11 @@ namespace AssetStudio.Avalonia.Views
             ShowBitmap(bytes, width, height);
             ShowInfo(assetItem);
             StatusStripUpdate("'Ctrl'+'R'/'G'/'B'/'A' (click the preview first) for Channel Toggle");
+        }
+
+        private static string FormatName(GraphicsFormat graphicsFormat, TextureFormat textureFormat)
+        {
+            return graphicsFormat != GraphicsFormat.None ? graphicsFormat.ToString() : textureFormat.ToString();
         }
 
         private static void ApplyChannelMask(byte[] bytes, bool[] channels, int validChannel)
