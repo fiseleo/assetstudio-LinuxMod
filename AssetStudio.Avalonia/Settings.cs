@@ -73,6 +73,7 @@ namespace AssetStudio.Avalonia
         public bool exportMaterials = false;
         public string lastOpenDirectory = "";
         public string lastSaveDirectory = "";
+        public string typeTreeDumpsDirectory = ""; //empty: TypeTreeDumps in the app data folder
 
         private static Settings Load()
         {

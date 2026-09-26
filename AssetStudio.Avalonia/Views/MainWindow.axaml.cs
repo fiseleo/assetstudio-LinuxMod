@@ -113,6 +113,10 @@ namespace AssetStudio.Avalonia.Views
             MiHoYoBinData.Encrypted = s.encrypted;
             MiHoYoBinData.Key = s.key;
             AssetsHelper.Minimal = s.minimalAssetMap;
+            if (!string.IsNullOrEmpty(s.typeTreeDumpsDirectory))
+            {
+                TypeTreeDatabase.DumpsDirectory = s.typeTreeDumpsDirectory;
+            }
         }
 
         private void InitializeLogger()
@@ -680,6 +684,18 @@ namespace AssetStudio.Avalonia.Views
                 await Task.Run(() => assemblyLoader.Load(folder));
                 Logger.Info($"Loaded assemblies from {folder}");
             }
+        }
+
+        private async void TypeTreeDumpsFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var folder = await Dialogs.PickFolderAsync(this, "Select a folder of TypeTreeDumps InfoJson files (<version>.json) - cancel for the default", TypeTreeDatabase.DumpsDirectory);
+            Settings.Default.typeTreeDumpsDirectory = folder ?? "";
+            Settings.Default.Save();
+            TypeTreeDatabase.DumpsDirectory = string.IsNullOrEmpty(folder) ? null : folder;
+            var versions = TypeTreeDatabase.DumpVersions;
+            Logger.Info(versions.Count > 0
+                ? $"Type tree dumps in {TypeTreeDatabase.DumpsDirectory}: Unity {string.Join(", ", versions)}"
+                : $"No type tree dumps in {TypeTreeDatabase.DumpsDirectory}; the embedded database (up to Unity {TypeTreeDatabase.LatestVersion}) is used");
         }
 
         private void Game_SelectionChanged(object sender, SelectionChangedEventArgs e)

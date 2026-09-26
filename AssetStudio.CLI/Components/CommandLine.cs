@@ -38,6 +38,7 @@ namespace AssetStudio.CLI
                 optionsBinder.Key,
                 optionsBinder.AIFile,
                 optionsBinder.DummyDllFolder,
+                optionsBinder.TypeTreeDumps,
                 optionsBinder.Input,
                 optionsBinder.Output
             };
@@ -66,6 +67,7 @@ namespace AssetStudio.CLI
         public byte Key { get; set; }
         public FileInfo AIFile { get; set; }
         public DirectoryInfo DummyDllFolder { get; set; }
+        public DirectoryInfo TypeTreeDumps { get; set; }
         public FileInfo Input { get; set; }
         public DirectoryInfo Output { get; set; }
     }
@@ -89,6 +91,7 @@ namespace AssetStudio.CLI
         public readonly Option<byte> Key;
         public readonly Option<FileInfo> AIFile;
         public readonly Option<DirectoryInfo> DummyDllFolder;
+        public readonly Option<DirectoryInfo> TypeTreeDumps;
         public readonly Argument<FileInfo> Input;
         public readonly Argument<DirectoryInfo> Output;
 
@@ -172,6 +175,7 @@ namespace AssetStudio.CLI
             ImageFormat = new Option<ImageFormat>("--image_format", "Specify texture export format for Texture2D and Sprite assets (Png, Jpeg, Bmp, Webp).");
             AIFile = new Option<FileInfo>("--ai_file", "Specify asset_index json file path (to recover GI containers).").LegalFilePathsOnly();
             DummyDllFolder = new Option<DirectoryInfo>("--dummy_dlls", "Specify DummyDll path.").LegalFilePathsOnly();
+            TypeTreeDumps = new Option<DirectoryInfo>("--typetree_dumps", "Folder of TypeTreeDumps InfoJson files (<version>.json) for Unity versions newer than the embedded type tree database.").LegalFilePathsOnly();
             Input = new Argument<FileInfo>("input_path", "Input file/folder.").LegalFilePathsOnly();
             Output = new Argument<DirectoryInfo>("output_path", "Output folder.").LegalFilePathsOnly();
 
@@ -264,6 +268,7 @@ namespace AssetStudio.CLI
             Key = bindingContext.ParseResult.GetValueForOption(Key),
             AIFile = bindingContext.ParseResult.GetValueForOption(AIFile),
             DummyDllFolder = bindingContext.ParseResult.GetValueForOption(DummyDllFolder),
+            TypeTreeDumps = bindingContext.ParseResult.GetValueForOption(TypeTreeDumps),
             Input = bindingContext.ParseResult.GetValueForArgument(Input),
             Output = bindingContext.ParseResult.GetValueForArgument(Output)
         };

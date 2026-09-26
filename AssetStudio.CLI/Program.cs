@@ -45,6 +45,10 @@ namespace AssetStudio.CLI
                 Logger.FileLogging = Settings.Default.enableFileLogging;
                 AssetsHelper.Minimal = Settings.Default.minimalAssetMap;
                 AssetsHelper.SetUnityVersion(o.UnityVersion);
+                if (o.TypeTreeDumps != null)
+                {
+                    TypeTreeDatabase.DumpsDirectory = o.TypeTreeDumps.FullName;
+                }
 
                 TypeFlags.SetTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Settings.Default.types));
 

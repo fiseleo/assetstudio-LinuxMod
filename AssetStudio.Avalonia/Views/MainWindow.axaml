@@ -56,6 +56,7 @@
         <Separator />
         <MenuItem Header="Specify UnityCN key..." Click="UnityCNKeys_Click" />
         <MenuItem Header="Load assembly folder (MonoBehaviour)..." Click="LoadAssemblyFolder_Click" />
+        <MenuItem Header="Type tree dumps folder..." Click="TypeTreeDumpsFolder_Click" />
         <Separator />
         <MenuItem Header="Export options..." Click="ExportOptions_Click" />
       </MenuItem>
