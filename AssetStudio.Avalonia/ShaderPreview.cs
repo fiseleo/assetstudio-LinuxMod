@@ -64,6 +64,9 @@ namespace AssetStudio.Avalonia
         /// <summary>For tools and tests: replaces the materials of the sub meshes of the model previews.</summary>
         public static Func<Material, Material> MaterialOverride { get; set; }
 
+        /// <summary>Whether the variants receiving the main light's shadows are preferred (the preview draws the shadows).</summary>
+        public static bool Shadows { get; set; } = true;
+
         /// <summary>The preview of a converted model: its sub meshes with their materials (null when none can be drawn).</summary>
         public static ShaderPreview FromModel(ModelConverter model)
         {
@@ -205,7 +208,7 @@ namespace AssetStudio.Avalonia
                 string reason;
                 try
                 {
-                    variant = UnityShaderVariant.Select(shader, material.m_ShaderKeywords, material, out reason, shadows: true);
+                    variant = UnityShaderVariant.Select(shader, material.m_ShaderKeywords, material, out reason, shadows: Shadows);
                 }
                 catch (Exception e)
                 {
@@ -384,7 +387,8 @@ namespace AssetStudio.Avalonia
                 foreach (var part in parts.Where(x => x.Draw != null))
                 {
                     var values = UnityShaderValues.CreateDefaults(linear);
-                    values.SetCamera(Matrix4x4.Identity, Unmirror(position), Unmirror(target), Unmirror(up), width, height, fieldOfView);
+                    //Unity's Vulkan programs flip their output themselves; Direct3D's are flipped by the projection
+                    values.SetCamera(Matrix4x4.Identity, Unmirror(position), Unmirror(target), Unmirror(up), width, height, fieldOfView, !part.Variant.IsVulkan);
                     var light = values.SetLightFromCamera(Unmirror(position), Unmirror(target), Unmirror(up));
                     values.SetMaterial(part.Material, name => part.TextureSizes.TryGetValue(name, out var size) ? size : null, linear);
                     if (part.Variant.ReceivesShadows)
@@ -392,7 +396,13 @@ namespace AssetStudio.Avalonia
                         //the main light's shadow map covers the model
                         var (clip, lookup, texture) = UnityShaderValues.ShadowMatrices(light, Unmirror(center), radius);
                         values.SetMainLightShadows(texture, 2048);
+                        //the screen space shadows are collected with the projection unflipped: ComputeScreenPos reads them
+                        //so with either projection (v = 0.5 + 0.5 y of the unflipped clip space)
                         values.TryGet("unity_MatrixVP", out var viewProjection);
+                        viewProjection = (float[])viewProjection.Clone();
+                        if (!part.Variant.IsVulkan)
+                            for (int row = 1; row < 16; row += 4)
+                                viewProjection[row] = -viewProjection[row];
                         shadows ??= new ShadedShadows { LightViewProjection = clip, LightLookup = lookup, WorldToShadow = texture, ViewProjection = viewProjection };
                     }
                     gpu.UpdateShadedDraw(part.Draw, values);

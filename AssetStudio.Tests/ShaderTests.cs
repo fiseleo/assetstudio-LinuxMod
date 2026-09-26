@@ -8,11 +8,28 @@ namespace AssetStudio.Tests
 {
     public class VulkanProgramTests
     {
-        //a Vulkan program of Unity 2021.3 (Legacy Shaders/Diffuse, DIRECTIONAL): SMOL-V encoding version 1
+        //a program entry of a Vulkan blob of Unity 2021.3 (Legacy Shaders/Diffuse, DIRECTIONAL): SMOL-V encoding version 1
+        private static ShaderSubProgram Entry()
+        {
+            var data = File.ReadAllBytes(TestUtil.Fixture("vulkan_entry_2021.3.bin"));
+            using var reader = new EndianBinaryReader(new MemoryStream(data), EndianType.LittleEndian);
+            return new ShaderSubProgram(reader, false, data.Length);
+        }
+
+        [Fact]
+        public void Entry_HasTheBindChannelsAfterTheCode()
+        {
+            var entry = Entry();
+            Assert.Equal(ShaderGpuProgramType.SPIRV, entry.m_ProgramType);
+            Assert.Equal(new[] { "DIRECTIONAL" }, entry.m_Keywords);
+            //position, texture coordinate 0, normal to the inputs 0, 2, 1 (13 + location)
+            Assert.Equal(new[] { (0u, 13u), (4u, 15u), (1u, 14u) }, entry.BindChannels.ToArray());
+        }
+
         [Fact]
         public void SmolvVersion1_DecodesToValidModules()
         {
-            var code = File.ReadAllBytes(TestUtil.Fixture("vulkan_program_2021.3.bin"));
+            var code = Entry().m_ProgramCode;
             var stages = SpirVShaderConverter.DecodeStages(code);
             Assert.NotNull(stages[0]);
             Assert.NotNull(stages[1]);
@@ -30,8 +47,7 @@ namespace AssetStudio.Tests
         [Fact]
         public void Disassembly_PrintsTheLiteralsOfDecorations()
         {
-            var code = File.ReadAllBytes(TestUtil.Fixture("vulkan_program_2021.3.bin"));
-            var text = SpirVShaderConverter.Convert(code);
+            var text = SpirVShaderConverter.Convert(Entry().m_ProgramCode);
             Assert.Contains("DescriptorSet 1", text);
             Assert.Contains("Offset 64", text);
             Assert.DoesNotContain("Unable to decode", text);
@@ -418,7 +434,7 @@ float4 main(float4 position : SV_POSITION, float3 uv : TEXCOORD0) : SV_TARGET
         {
             var values = new UnityShaderValues();
             var target = new Vec3(0, 1, 0);
-            values.SetCamera(Matrix.Identity, new Vec3(0, 1, -5), target, Vec3.UnitY, 400, 300);
+            values.SetCamera(Matrix.Identity, new Vec3(0, 1, -5), target, Vec3.UnitY, 400, 300, 30f, true);
             values.TryGet("unity_MatrixVP", out var vp);
             var m = new Matrix(vp[0], vp[1], vp[2], vp[3], vp[4], vp[5], vp[6], vp[7], vp[8], vp[9], vp[10], vp[11], vp[12], vp[13], vp[14], vp[15]);
             Vec3 Ndc(Vec3 p)

@@ -39,6 +39,13 @@ namespace AssetStudio
     {
         public ShaderGpuProgramType ProgramType;
         public byte[] Dxbc;
+        /// <summary>
+        /// Vulkan: the SPIR-V of the stage; the resources keep Unity's sets and bindings, the registers of the parameters
+        /// are (stages &lt;&lt; 24) | (set &lt;&lt; 16) | binding.
+        /// </summary>
+        public byte[] Spirv;
+        /// <summary>Vulkan: the vertex inputs, Unity's shader channel and the input location.</summary>
+        public List<(int Channel, int Location)> Inputs = new List<(int, int)>();
         public List<UnityConstantBuffer> ConstantBuffers = new List<UnityConstantBuffer>();
         public List<UnityShaderTexture> Textures = new List<UnityShaderTexture>();
     }
@@ -68,6 +75,12 @@ namespace AssetStudio
         public UnityShaderStage Vertex;
         public UnityShaderStage Fragment;
         public UnityRenderState State;
+        /// <summary>Direct3D 11 (DXBC, translated by vkd3d-shader) or Vulkan (the game's own SPIR-V).</summary>
+        public ShaderCompilerPlatform Platform = ShaderCompilerPlatform.D3D11;
+        public bool IsVulkan => Platform == ShaderCompilerPlatform.Vulkan;
+
+        /// <summary>The set and binding a Vulkan parameter register names.</summary>
+        public static (uint set, uint binding) VulkanSlot(int register) => ((uint)(register >> 16) & 0xFF, (uint)register & 0xFFFF);
 
         private sealed record Candidate(uint BlobIndex, ShaderGpuProgramType Type, string[] Keywords, int Tier, SerializedSubProgram Serialized, uint ParameterIndex);
 
@@ -103,12 +116,16 @@ namespace AssetStudio
                 reason = "the shader has no compiled programs (Unity 5.5 and up)";
                 return null;
             }
-            var platform = Array.IndexOf(shader.platforms, ShaderCompilerPlatform.D3D11);
+            //Direct3D 11 (translated) first, else the Vulkan programs as they are
+            var platformId = shader.platforms.Contains(ShaderCompilerPlatform.D3D11) ? ShaderCompilerPlatform.D3D11 : ShaderCompilerPlatform.Vulkan;
+            var platform = Array.IndexOf(shader.platforms, platformId);
             if (platform < 0)
             {
-                reason = $"the shader has no Direct3D 11 programs (platforms: {string.Join(", ", shader.platforms)})";
+                reason = $"the shader has no Direct3D 11 or Vulkan programs (platforms: {string.Join(", ", shader.platforms)})";
                 return null;
             }
+            var vulkan = platformId == ShaderCompilerPlatform.Vulkan;
+            string decodeError = null;
             var keywords = new HashSet<string>(materialKeywords ?? Array.Empty<string>(), StringComparer.Ordinal);
             ShaderProgram programs = null;
 
@@ -143,7 +160,7 @@ namespace AssetStudio
                     List<Candidate> Candidates(SerializedProgram program)
                     {
                         var list = new List<Candidate>();
-                        static bool IsDx11(ShaderGpuProgramType type) => type >= ShaderGpuProgramType.DX11VertexSM40 && type <= ShaderGpuProgramType.DX11DomainSM50;
+                        bool IsDx11(ShaderGpuProgramType type) => vulkan ? type == ShaderGpuProgramType.SPIRV : type >= ShaderGpuProgramType.DX11VertexSM40 && type <= ShaderGpuProgramType.DX11DomainSM50;
                         foreach (var sub in program?.m_SubPrograms ?? new List<SerializedSubProgram>())
                         {
                             if (IsDx11(sub.m_GpuProgramType))
@@ -175,7 +192,8 @@ namespace AssetStudio
                             .ThenBy(x => x.Tier)
                             .First();
                     }
-                    var fragmentSub = Best(pass.progFragment, null);
+                    //Vulkan programs hold every stage: the vertex program's when the fragment has none of its own
+                    var fragmentSub = Best(pass.progFragment, null) ?? (vulkan ? Best(pass.progVertex, null) : null);
                     if (fragmentSub == null)
                         continue;
                     var fragmentKeywords = fragmentSub.Keywords;
@@ -184,15 +202,42 @@ namespace AssetStudio
                         continue;
 
                     programs ??= ShaderConverter.ReadShaderProgram(shader, platform);
-                    UnityShaderStage Stage(Candidate sub, SerializedProgram program)
+                    UnityShaderStage Stage(Candidate sub, SerializedProgram program, int stageIndex)
                     {
                         if (sub.BlobIndex >= programs.m_SubPrograms.Length || programs.m_SubPrograms[sub.BlobIndex] == null)
                             return null;
-                        var code = programs.m_SubPrograms[sub.BlobIndex].m_ProgramCode;
-                        var start = FindDxbc(code);
-                        if (start < 0)
-                            return null;
-                        var stage = new UnityShaderStage { ProgramType = sub.Type, Dxbc = code.AsSpan(start).ToArray() };
+                        var blob = programs.m_SubPrograms[sub.BlobIndex];
+                        var code = blob.m_ProgramCode;
+                        UnityShaderStage stage;
+                        if (vulkan)
+                        {
+                            byte[] spirv;
+                            try
+                            {
+                                spirv = SpirVShaderConverter.DecodeStages(code)[stageIndex];
+                                if (spirv == null && stageIndex == 1 && vertexSub.BlobIndex < programs.m_SubPrograms.Length)
+                                    spirv = SpirVShaderConverter.DecodeStages(programs.m_SubPrograms[vertexSub.BlobIndex]?.m_ProgramCode)[1];
+                            }
+                            catch (Exception e)
+                            {
+                                decodeError = $"unable to decode the Vulkan program: {e.Message}";
+                                return null;
+                            }
+                            if (spirv == null)
+                                return null;
+                            stage = new UnityShaderStage { ProgramType = sub.Type, Spirv = spirv };
+                            //the bind channels: after the code (2021.3.10 and up) or serialized; the target of an input is 13 + its location
+                            List<(uint source, uint target)> channels = blob.BindChannels.Count > 0 ? blob.BindChannels
+                                : sub.Serialized?.m_Channels?.m_Channels.Select(x => ((uint)x.source, (uint)x.target)).ToList() ?? new List<(uint, uint)>();
+                            stage.Inputs.AddRange(channels.Where(x => x.target >= 13).Select(x => ((int)x.source, (int)x.target - 13)));
+                        }
+                        else
+                        {
+                            var start = FindDxbc(code);
+                            if (start < 0)
+                                return null;
+                            stage = new UnityShaderStage { ProgramType = sub.Type, Dxbc = code.AsSpan(start).ToArray() };
+                        }
                         if (sub.ParameterIndex != uint.MaxValue)
                         {
                             //2021.3.10 and up: the layouts of the constant buffers are shared by the program, the bindings are the variant's
@@ -236,10 +281,19 @@ namespace AssetStudio
                         }
                         return stage;
                     }
-                    var vertex = Stage(vertexSub, pass.progVertex);
-                    var fragment = Stage(fragmentSub, pass.progFragment);
+                    var vertex = Stage(vertexSub, pass.progVertex, 0);
+                    var fragment = Stage(fragmentSub, pass.progFragment, 1);
                     if (vertex == null || fragment == null)
                         continue;
+                    if (vulkan)
+                    {
+                        //the parameters of a Vulkan program are those of every stage (their registers say which)
+                        foreach (var (a, b) in new[] { (vertex, fragment), (fragment, vertex) })
+                        {
+                            a.ConstantBuffers.AddRange(b.ConstantBuffers.Where(x => !a.ConstantBuffers.Any(y => y.Register == x.Register)).ToList());
+                            a.Textures.AddRange(b.Textures.Where(x => !a.Textures.Any(y => y.Register == x.Register)).ToList());
+                        }
+                    }
                     return new UnityShaderVariant
                     {
                         ShaderName = form.m_Name,
@@ -249,10 +303,11 @@ namespace AssetStudio
                         Vertex = vertex,
                         Fragment = fragment,
                         State = ReadState(pass.m_State, material),
+                        Platform = platformId,
                     };
                 }
             }
-            reason ??= "no forward pass with Direct3D 11 vertex and fragment programs";
+            reason ??= decodeError ?? (vulkan ? "no forward pass with Vulkan programs" : "no forward pass with Direct3D 11 vertex and fragment programs");
             return null;
         }
 
@@ -655,9 +710,9 @@ namespace AssetStudio
         /// </summary>
         public static bool? FromPrograms(UnityShaderVariant variant)
         {
-            if (variant?.Fragment?.Dxbc == null || IsScriptablePipeline(variant))
+            var code = variant?.Fragment?.Dxbc ?? variant?.Fragment?.Spirv; //immediate constants in both
+            if (code == null || IsScriptablePipeline(variant))
                 return null;
-            var code = variant.Fragment.Dxbc;
             if (HasFloat(code, 0.220916301f) && HasFloat(code, 1 - 0.220916301f))
                 return false;
             if (HasFloat(code, 0.04f) && HasFloat(code, 0.96f))
@@ -782,6 +837,31 @@ namespace AssetStudio
             var light = Vec3.Normalize(-forward * 0.7f + up * 0.6f - right * 0.4f);
             Set("_WorldSpaceLightPos0", light.X, light.Y, light.Z, 0);
             Set("_MainLightPosition", light.X, light.Y, light.Z, 0);
+            //the vertex lights of the legacy passes (Vertex, VertexLit): view space, the directional light first
+            if (values.TryGetValue("unity_MatrixV", out var v))
+            {
+                //column-major: view * (light, 0)
+                var x = v[0] * light.X + v[4] * light.Y + v[8] * light.Z;
+                var y = v[1] * light.X + v[5] * light.Y + v[9] * light.Z;
+                var z = v[2] * light.X + v[6] * light.Y + v[10] * light.Z;
+                var positions = new float[8 * 4];
+                (positions[0], positions[1], positions[2], positions[3]) = (x, y, z, 0);
+                var colors = new float[8 * 4];
+                values.TryGetValue("_LightColor0", out var color);
+                Array.Copy(color ?? new float[] { 1, 1, 1, 1 }, colors, 4);
+                var attenuations = new float[8 * 4];
+                for (int i = 0; i < 8; i++)
+                    (attenuations[i * 4], attenuations[i * 4 + 1]) = (-1, 1); //not a spot light, no attenuation
+                var spots = new float[8 * 4];
+                for (int i = 0; i < 8; i++)
+                    spots[i * 4 + 2] = 1;
+                Set("unity_LightPosition", positions);
+                Set("unity_LightColor", colors);
+                Set("unity_LightAtten", attenuations);
+                Set("unity_SpotDirection", spots);
+                //int4: x the light count, y zero, z one (the loops of the fixed function emulation); the bits as they are
+                Set("unity_VertexLightParams", BitConverter.Int32BitsToSingle(1), BitConverter.Int32BitsToSingle(0), BitConverter.Int32BitsToSingle(1), BitConverter.Int32BitsToSingle(0));
+            }
             return light;
         }
 
@@ -823,8 +903,12 @@ namespace AssetStudio
             Set("_CascadeShadowSplitSphereRadii", 1e8f, 1e8f, 1e8f, 1e8f);
         }
 
-        /// <summary>Camera and object matrices (Unity world space): a perspective camera at a position looking at a target.</summary>
-        public void SetCamera(Matrix objectToWorld, Vec3 position, Vec3 target, Vec3 upHint, int width, int height, float fieldOfView = 30f)
+        /// <summary>
+        /// Camera and object matrices (Unity world space): a perspective camera at a position looking at a target.
+        /// <paramref name="flipY"/>: the projection flipped like a render texture's (_ProjectionParams.x = -1) so that
+        /// Direct3D programs come out upright in Vulkan's framebuffer; Unity's Vulkan programs flip their output themselves.
+        /// </summary>
+        public void SetCamera(Matrix objectToWorld, Vec3 position, Vec3 target, Vec3 upHint, int width, int height, float fieldOfView, bool flipY)
         {
             var distance = Math.Max((target - position).Length(), 1e-5f);
             var forward = Vec3.Normalize(target - position);
@@ -848,7 +932,7 @@ namespace AssetStudio
             //Direct3D 11 with reversed Z (GL.GetGPUProjectionMatrix): z' = 0.5 w - 0.5 z
             var reversedZ = new Matrix(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -0.5f, 0, 0, 0, 0.5f, 1);
             //rendered like into a render texture (Y flipped, _ProjectionParams.x = -1): Vulkan's framebuffer Y goes down
-            var projection = glProjection * reversedZ * Matrix.CreateScale(1, -1, 1);
+            var projection = glProjection * reversedZ * (flipY ? Matrix.CreateScale(1, -1, 1) : Matrix.Identity);
             Matrix.Invert(projection, out var inverseProjection);
             Matrix.Invert(objectToWorld, out var worldToObject);
 
@@ -874,7 +958,7 @@ namespace AssetStudio
             Set("unity_MatrixPreviousM", objectToWorld);
             Set("unity_MatrixPreviousMI", worldToObject);
             Set("_WorldSpaceCameraPos", position.X, position.Y, position.Z, 1);
-            Set("_ProjectionParams", -1, near, far, 1 / far);
+            Set("_ProjectionParams", flipY ? -1 : 1, near, far, 1 / far);
             Set("_ScreenParams", width, height, 1 + 1f / width, 1 + 1f / height);
             Set("_ScaledScreenParams", width, height, 1 + 1f / width, 1 + 1f / height);
             //reversed Z

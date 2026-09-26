@@ -994,6 +994,18 @@ namespace AssetStudio
             return parameters;
         }
 
+        /// <summary>The bytes of an entry of the blob (a program or a parameter entry), null when it isn't loaded.</summary>
+        public byte[] GetEntryData(uint index)
+        {
+            if (index >= entries.Length || entries[index].Segment >= segments.Count || segments[entries[index].Segment] == null)
+                return null;
+            var entry = entries[index];
+            var segment = segments[entry.Segment];
+            if (entry.Offset < 0 || entry.Offset + entry.Length > segment.Length)
+                return null;
+            return segment.AsSpan(entry.Offset, entry.Length).ToArray();
+        }
+
         public ShaderSubProgramEntry[] entries;
         public ShaderSubProgram[] m_SubPrograms;
 
@@ -1265,6 +1277,7 @@ namespace AssetStudio
             m_ProgramCode = reader.ReadBytes(codeLength);
             reader.AlignStream();
 
+            var parametersStart = reader.BaseStream.Position;
             try
             {
                 Parameters = BlobProgramParameters.Read(reader, m_Version, end);
@@ -1274,6 +1287,16 @@ namespace AssetStudio
             catch (Exception e) when (e is EndOfStreamException || e is ArgumentOutOfRangeException || e is OverflowException || e is OutOfMemoryException || e is InvalidDataException)
             {
                 Parameters = null;
+            }
+            if (Parameters == null)
+            {
+                //2021.3.10 and up: the parameters are entries of their own, only the bind channels follow the code
+                reader.BaseStream.Position = parametersStart;
+                BindChannels = ReadBindChannels(reader, limit);
+            }
+            else
+            {
+                BindChannels = Parameters.BindChannels;
             }
         }
 
@@ -1288,6 +1311,33 @@ namespace AssetStudio
 
         /// <summary>The parameters stored after the byte code (bind channels, constant buffers, resources), null when unreadable.</summary>
         public BlobProgramParameters Parameters { get; private set; }
+
+        /// <summary>
+        /// The vertex inputs: Unity's shader channel (0 position, 1 normal, 2 tangent, 3 color, 4.. texture coordinates)
+        /// and the input it goes to (for Vulkan, 13 + the location).
+        /// </summary>
+        public List<(uint source, uint target)> BindChannels { get; private set; } = new List<(uint, uint)>();
+
+        private static List<(uint, uint)> ReadBindChannels(EndianBinaryReader reader, long limit)
+        {
+            var channels = new List<(uint, uint)>();
+            try
+            {
+                if (limit - reader.BaseStream.Position < 8)
+                    return channels;
+                reader.ReadUInt32(); //source map
+                var count = reader.ReadInt32();
+                if (count < 0 || count > 32 || count * 8 > limit - reader.BaseStream.Position)
+                    return channels;
+                for (int i = 0; i < count; i++)
+                    channels.Add((reader.ReadUInt32(), reader.ReadUInt32()));
+            }
+            catch (EndOfStreamException)
+            {
+                channels.Clear();
+            }
+            return channels;
+        }
 
         public string Export()
         {

@@ -80,6 +80,8 @@ namespace AssetStudio.Avalonia
         /// <summary>The vertex program (set 0) and the fragment program (its descriptors moved to set 1).</summary>
         public static (byte[] Vertex, byte[] Fragment) Get(UnityShaderVariant variant)
         {
+            if (variant.IsVulkan)
+                return (variant.Vertex.Spirv, variant.Fragment.Spirv); //the game's own
             var key = Convert.ToHexString(SHA256.HashData(variant.Vertex.Dxbc)) + Convert.ToHexString(SHA256.HashData(variant.Fragment.Dxbc));
             if (cache.TryGetValue(key, out var spirv))
                 return spirv;
@@ -176,6 +178,17 @@ namespace AssetStudio.Avalonia
         }
 
         //the attribute of a DXBC input semantic: (offset in floats, format); null: no data (reads zeros)
+        /// <summary>The attribute of one of Unity's shader channels (0 position, 1 normal, 2 tangent, 3 color, 4.. texture coordinates).</summary>
+        private static (uint offset, Format format)? AttributeOfChannel(int channel) => channel switch
+        {
+            0 => AttributeOf("POSITION", 0),
+            1 => AttributeOf("NORMAL", 0),
+            2 => AttributeOf("TANGENT", 0),
+            3 => AttributeOf("COLOR", 0),
+            >= 4 and <= 11 => AttributeOf("TEXCOORD", channel - 4),
+            _ => null,
+        };
+
         private static (uint offset, Format format)? AttributeOf(string semantic, int index) => semantic.ToUpperInvariant() switch
         {
             "POSITION" or "SV_POSITION" => (0, Format.R32G32B32Sfloat),
@@ -193,9 +206,12 @@ namespace AssetStudio.Avalonia
             _ => null,
         };
 
+        //a descriptor of a draw: the resource (of the first stage using it) and every stage using it
+        private sealed record Slot(uint Set, SpirvReflection.Resource Resource, int Stage, ShaderStageFlags Stages);
+
         /// <summary>
-        /// Compiles a variant of a game's shader (Direct3D 11 programs through vkd3d-shader) into a pipeline drawing
-        /// indices [first, first + count) of a mesh. <paramref name="texture"/> gives the texture of a shader texture
+        /// Compiles a variant of a game's shader (Direct3D 11 programs through vkd3d-shader, or its Vulkan programs) into
+        /// a pipeline drawing index ranges of a mesh. <paramref name="texture"/> gives the texture of a shader texture
         /// parameter (null: Unity's default texture <paramref name="defaultTexture"/> names, e.g. "white", "bump").
         /// </summary>
         public ShadedDraw CreateShadedDraw(UnityShaderVariant variant, IEnumerable<(int First, int Count)> ranges, Func<UnityShaderTexture, PreviewTexture> texture,
@@ -207,38 +223,73 @@ namespace AssetStudio.Avalonia
             var comparisonSamplers = stages.Select(x => DxbcSignature.ComparisonSamplers(x.Dxbc)).ToArray();
             var draw = new ShadedDraw { Owner = this, Variant = variant, Transparent = variant.State.Blend, Linear = linear };
             draw.Ranges.AddRange(ranges.Where(x => x.Count > 0).Select(x => ((uint)x.First, (uint)x.Count)));
+
+            //the descriptors by set and binding: vkd3d's programs have set 0 (vertex) and 1 (fragment), Unity's Vulkan
+            //programs share their sets between the stages
+            var slots = new List<Slot>();
+            for (int s = 0; s < 2; s++)
+            {
+                foreach (var resource in reflections[s].Resources)
+                {
+                    var flags = s == 0 ? ShaderStageFlags.VertexBit : ShaderStageFlags.FragmentBit;
+                    var index = slots.FindIndex(x => x.Set == resource.Set && x.Resource.Binding == resource.Binding);
+                    if (index >= 0)
+                        slots[index] = slots[index] with { Stages = slots[index].Stages | flags };
+                    else
+                        slots.Add(new Slot(resource.Set, resource, s, flags));
+                }
+            }
+            var setCount = Math.Max(2, slots.Count == 0 ? 0 : (int)slots.Max(x => x.Set) + 1);
+            draw.SetLayouts = new DescriptorSetLayout[setCount];
+            draw.Sets = new DescriptorSet[setCount];
+
+            //the parameters of a descriptor: by register (Direct3D), by the set and binding the register names (Vulkan)
+            bool Names(int register, Slot slot) => variant.IsVulkan
+                ? UnityShaderVariant.VulkanSlot(register) == (slot.Set, slot.Resource.Binding)
+                : register == slot.Resource.Register;
+            IEnumerable<UnityConstantBuffer> BuffersOf(Slot slot) => variant.IsVulkan ? stages.SelectMany(x => x.ConstantBuffers) : stages[slot.Stage].ConstantBuffers;
+            IEnumerable<UnityShaderTexture> TexturesOf(Slot slot) => variant.IsVulkan ? stages.SelectMany(x => x.Textures) : stages[slot.Stage].Textures;
+            Sampler SamplerOf(Slot slot, int register)
+            {
+                var users = TexturesOf(slot).Where(x => variant.IsVulkan ? UnityShaderVariant.VulkanSlot(x.SamplerRegister) == UnityShaderVariant.VulkanSlot(register) : x.SamplerRegister == register).ToList();
+                //comparison samplers: declared so in the DXBC; the samplers of the shadow maps in Vulkan programs
+                var comparison = variant.IsVulkan
+                    ? users.Any(x => x.Name == "_MainLightShadowmapTexture" || x.Name == "_AdditionalLightsShadowmapTexture")
+                    : comparisonSamplers[slot.Stage].Contains(register);
+                return SamplerFor(users, comparison);
+            }
+
             ShaderModule vertexModule = default, fragmentModule = default;
             try
             {
-                //descriptor set layouts: set 0 vertex, set 1 fragment
-                for (int s = 0; s < 2; s++)
+                for (uint set = 0; set < setCount; set++)
                 {
-                    var resources = reflections[s].Resources;
-                    var bindings = stackalloc DescriptorSetLayoutBinding[Math.Max(1, resources.Count)];
-                    for (int i = 0; i < resources.Count; i++)
+                    var inSet = slots.Where(x => x.Set == set).ToList();
+                    var bindings = stackalloc DescriptorSetLayoutBinding[Math.Max(1, inSet.Count)];
+                    for (int i = 0; i < inSet.Count; i++)
                     {
                         bindings[i] = new DescriptorSetLayoutBinding
                         {
-                            Binding = resources[i].Binding,
-                            DescriptorType = DescriptorTypeOf(resources[i].Kind),
+                            Binding = inSet[i].Resource.Binding,
+                            DescriptorType = DescriptorTypeOf(inSet[i].Resource.Kind),
                             DescriptorCount = 1,
-                            StageFlags = s == 0 ? ShaderStageFlags.VertexBit : ShaderStageFlags.FragmentBit,
+                            StageFlags = inSet[i].Stages,
                         };
                     }
                     var layoutInfo = new DescriptorSetLayoutCreateInfo
                     {
                         SType = StructureType.DescriptorSetLayoutCreateInfo,
-                        BindingCount = (uint)resources.Count,
+                        BindingCount = (uint)inSet.Count,
                         PBindings = bindings,
                     };
-                    Check(vk.CreateDescriptorSetLayout(device, in layoutInfo, null, out draw.SetLayouts[s]), "vkCreateDescriptorSetLayout");
+                    Check(vk.CreateDescriptorSetLayout(device, in layoutInfo, null, out draw.SetLayouts[set]), "vkCreateDescriptorSetLayout");
                 }
                 fixed (DescriptorSetLayout* pSetLayouts = draw.SetLayouts)
                 {
                     var pipelineLayoutInfo = new PipelineLayoutCreateInfo
                     {
                         SType = StructureType.PipelineLayoutCreateInfo,
-                        SetLayoutCount = 2,
+                        SetLayoutCount = (uint)setCount,
                         PSetLayouts = pSetLayouts,
                     };
                     Check(vk.CreatePipelineLayout(device, in pipelineLayoutInfo, null, out draw.Layout), "vkCreatePipelineLayout");
@@ -249,80 +300,79 @@ namespace AssetStudio.Avalonia
                 var kinds = new[] { DescriptorType.UniformBuffer, DescriptorType.SampledImage, DescriptorType.Sampler, DescriptorType.CombinedImageSampler };
                 for (int k = 0; k < 4; k++)
                 {
-                    poolSizes[k] = new DescriptorPoolSize { Type = kinds[k], DescriptorCount = (uint)Math.Max(1, reflections.Sum(r => r.Resources.Count(x => DescriptorTypeOf(x.Kind) == kinds[k]))) };
+                    poolSizes[k] = new DescriptorPoolSize { Type = kinds[k], DescriptorCount = (uint)Math.Max(1, slots.Count(x => DescriptorTypeOf(x.Resource.Kind) == kinds[k])) };
                 }
-                var poolInfo = new DescriptorPoolCreateInfo { SType = StructureType.DescriptorPoolCreateInfo, MaxSets = 2, PoolSizeCount = 4, PPoolSizes = poolSizes };
+                var poolInfo = new DescriptorPoolCreateInfo { SType = StructureType.DescriptorPoolCreateInfo, MaxSets = (uint)setCount, PoolSizeCount = 4, PPoolSizes = poolSizes };
                 Check(vk.CreateDescriptorPool(device, in poolInfo, null, out draw.Pool), "vkCreateDescriptorPool");
                 fixed (DescriptorSetLayout* pSetLayouts = draw.SetLayouts)
                 fixed (DescriptorSet* pSets = draw.Sets)
                 {
-                    var allocInfo = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = draw.Pool, DescriptorSetCount = 2, PSetLayouts = pSetLayouts };
+                    var allocInfo = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = draw.Pool, DescriptorSetCount = (uint)setCount, PSetLayouts = pSetLayouts };
                     Check(vk.AllocateDescriptorSets(device, in allocInfo, pSets), "vkAllocateDescriptorSets");
                 }
-                for (int s = 0; s < 2; s++)
+                foreach (var slot in slots)
                 {
-                    foreach (var resource in reflections[s].Resources)
+                    var resource = slot.Resource;
+                    var write = new WriteDescriptorSet
                     {
-                        var write = new WriteDescriptorSet
-                        {
-                            SType = StructureType.WriteDescriptorSet,
-                            DstSet = draw.Sets[s],
-                            DstBinding = resource.Binding,
-                            DescriptorCount = 1,
-                            DescriptorType = DescriptorTypeOf(resource.Kind),
-                        };
-                        switch (resource.Kind)
-                        {
-                            case SpirvReflection.ResourceKind.UniformBuffer:
+                        SType = StructureType.WriteDescriptorSet,
+                        DstSet = draw.Sets[slot.Set],
+                        DstBinding = resource.Binding,
+                        DescriptorCount = 1,
+                        DescriptorType = DescriptorTypeOf(resource.Kind),
+                    };
+                    switch (resource.Kind)
+                    {
+                        case SpirvReflection.ResourceKind.UniformBuffer:
+                            {
+                                var constants = BuffersOf(slot).FirstOrDefault(x => Names(x.Register, slot));
+                                var size = Math.Max(resource.Size, constants?.Size ?? 0);
+                                size = Math.Max(16, (size + 15) / 16 * 16);
+                                CreateBuffer((ulong)size, BufferUsageFlags.UniformBufferBit, 0, out var buffer, out var memory);
+                                void* mapped;
+                                Check(vk.MapMemory(device, memory, 0, Vk.WholeSize, 0, &mapped), "vkMapMemory");
+                                new Span<byte>(mapped, size).Clear();
+                                draw.Uniforms.Add((buffer, memory, (IntPtr)mapped, constants ?? new UnityConstantBuffer { Register = resource.Register }, size));
+                                var bufferInfo = new DescriptorBufferInfo { Buffer = buffer, Offset = 0, Range = (ulong)size };
+                                write.PBufferInfo = &bufferInfo;
+                                vk.UpdateDescriptorSets(device, 1, in write, 0, null);
+                                break;
+                            }
+                        case SpirvReflection.ResourceKind.Sampler:
+                            {
+                                var register = variant.IsVulkan ? (int)((slot.Set << 16) | resource.Binding) : resource.Register;
+                                var imageInfo = new DescriptorImageInfo { Sampler = SamplerOf(slot, register) };
+                                write.PImageInfo = &imageInfo;
+                                vk.UpdateDescriptorSets(device, 1, in write, 0, null);
+                                break;
+                            }
+                        default:
+                            {
+                                var parameter = TexturesOf(slot).FirstOrDefault(x => Names(x.Register, slot))
+                                    ?? new UnityShaderTexture { Name = "", Register = resource.Register, Dimension = 2 };
+                                ImageView view;
+                                if (parameter.Name == "_ShadowMapTexture")
                                 {
-                                    var constants = stages[s].ConstantBuffers.FirstOrDefault(x => x.Register == resource.Register);
-                                    var size = Math.Max(resource.Size, constants?.Size ?? 0);
-                                    size = Math.Max(16, (size + 15) / 16 * 16);
-                                    CreateBuffer((ulong)size, BufferUsageFlags.UniformBufferBit, 0, out var buffer, out var memory);
-                                    void* mapped;
-                                    Check(vk.MapMemory(device, memory, 0, Vk.WholeSize, 0, &mapped), "vkMapMemory");
-                                    new Span<byte>(mapped, size).Clear();
-                                    draw.Uniforms.Add((buffer, memory, (IntPtr)mapped, constants ?? new UnityConstantBuffer { Register = resource.Register }, size));
-                                    var bufferInfo = new DescriptorBufferInfo { Buffer = buffer, Offset = 0, Range = (ulong)size };
-                                    write.PBufferInfo = &bufferInfo;
-                                    vk.UpdateDescriptorSets(device, 1, in write, 0, null);
-                                    break;
+                                    //Unity's screen space shadows: lit until a frame collects them
+                                    EnsureShadowResources();
+                                    view = whiteView;
+                                    draw.ScreenShadowBindings.Add(((int)slot.Set, resource.Binding, DescriptorTypeOf(resource.Kind)));
                                 }
-                            case SpirvReflection.ResourceKind.Sampler:
+                                else if (parameter.Name == "_MainLightShadowmapTexture")
                                 {
-                                    var imageInfo = new DescriptorImageInfo { Sampler = SamplerOf(stages[s], comparisonSamplers[s], resource.Register) };
-                                    write.PImageInfo = &imageInfo;
-                                    vk.UpdateDescriptorSets(device, 1, in write, 0, null);
-                                    break;
+                                    //URP's shadow map
+                                    EnsureShadowResources();
+                                    view = shadowView;
                                 }
-                            default:
+                                else
                                 {
-                                    var parameter = stages[s].Textures.FirstOrDefault(x => x.Register == resource.Register)
-                                        ?? new UnityShaderTexture { Name = "", Register = resource.Register, Dimension = 2 };
-                                    ImageView view;
-                                    if (parameter.Name == "_ShadowMapTexture")
-                                    {
-                                        //Unity's screen space shadows: lit until a frame collects them
-                                        EnsureShadowResources();
-                                        view = whiteView;
-                                        draw.ScreenShadowBindings.Add((s, resource.Binding, DescriptorTypeOf(resource.Kind)));
-                                    }
-                                    else if (parameter.Name == "_MainLightShadowmapTexture")
-                                    {
-                                        //URP's shadow map
-                                        EnsureShadowResources();
-                                        view = shadowView;
-                                    }
-                                    else
-                                    {
-                                        view = TextureView(draw, resource, parameter, texture, defaultTexture);
-                                    }
-                                    var imageInfo = new DescriptorImageInfo { Sampler = SamplerOf(stages[s], comparisonSamplers[s], parameter.SamplerRegister), ImageView = view, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
-                                    write.PImageInfo = &imageInfo;
-                                    vk.UpdateDescriptorSets(device, 1, in write, 0, null);
-                                    break;
+                                    view = TextureView(draw, resource, parameter, texture, defaultTexture);
                                 }
-                        }
+                                var imageInfo = new DescriptorImageInfo { Sampler = SamplerOf(slot, parameter.SamplerRegister), ImageView = view, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
+                                write.PImageInfo = &imageInfo;
+                                vk.UpdateDescriptorSets(device, 1, in write, 0, null);
+                                break;
+                            }
                     }
                 }
 
@@ -343,15 +393,15 @@ namespace AssetStudio.Avalonia
             return draw;
         }
 
-        /// <summary>The sampler of a sampler register: comparison ones for shadow maps, clamped for the screen space shadows.</summary>
-        private Sampler SamplerOf(UnityShaderStage stage, HashSet<int> comparison, int register)
+        /// <summary>The sampler for the textures sampled with it: comparison ones for shadow maps, clamped for the screen space shadows.</summary>
+        private Sampler SamplerFor(IReadOnlyCollection<UnityShaderTexture> users, bool comparison)
         {
-            if (comparison.Contains(register))
+            if (comparison)
             {
                 EnsureShadowResources();
                 return compareSampler;
             }
-            if (stage.Textures.Any(x => x.SamplerRegister == register && x.Name == "_ShadowMapTexture"))
+            if (users.Any(x => x.Name == "_ShadowMapTexture"))
             {
                 EnsureShadowResources();
                 return clampSampler;
@@ -649,14 +699,24 @@ namespace AssetStudio.Avalonia
                 stages[1] = new PipelineShaderStageCreateInfo { SType = StructureType.PipelineShaderStageCreateInfo, Stage = ShaderStageFlags.FragmentBit, Module = fragment, PName = entry };
 
                 //vertex inputs: the input registers of the vertex program (SPIR-V location = register) from the mesh by semantic
-                var signature = DxbcSignature.ReadInputs(variant.Vertex.Dxbc).Where(x => x.SystemValue == 0).ToList();
+                //Direct3D: by the semantics of the input registers (location = register); Vulkan: by Unity's bind channels
+                var signature = variant.IsVulkan ? new List<DxbcSignature.Element>() : DxbcSignature.ReadInputs(variant.Vertex.Dxbc).Where(x => x.SystemValue == 0).ToList();
                 var locations = vertexReflection.InputLocations.Distinct().ToList();
                 var attributes = stackalloc VertexInputAttributeDescription[Math.Max(1, locations.Count)];
                 var usesZero = false;
                 for (int i = 0; i < locations.Count; i++)
                 {
-                    var element = signature.FirstOrDefault(x => x.Register == locations[i]);
-                    var attribute = element.Semantic != null ? AttributeOf(element.Semantic, element.SemanticIndex) : null;
+                    (uint offset, Format format)? attribute;
+                    if (variant.IsVulkan)
+                    {
+                        var input = variant.Vertex.Inputs.FirstOrDefault(x => x.Location == locations[i]);
+                        attribute = variant.Vertex.Inputs.Any(x => x.Location == locations[i]) ? AttributeOfChannel(input.Channel) : null;
+                    }
+                    else
+                    {
+                        var element = signature.FirstOrDefault(x => x.Register == locations[i]);
+                        attribute = element.Semantic != null ? AttributeOf(element.Semantic, element.SemanticIndex) : null;
+                    }
                     if (attribute is { } a)
                     {
                         attributes[i] = new VertexInputAttributeDescription { Location = (uint)locations[i], Binding = 0, Format = a.format, Offset = a.offset * 4 };
@@ -836,7 +896,7 @@ namespace AssetStudio.Avalonia
                     continue;
                 vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, draw.Pipeline);
                 fixed (DescriptorSet* sets = draw.Sets)
-                    vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, draw.Layout, 0, 2, sets, 0, null);
+                    vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, draw.Layout, 0, (uint)draw.Sets.Length, sets, 0, null);
                 foreach (var (first, count) in draw.Ranges)
                     vk.CmdDrawIndexed(commandBuffer, count, 1, first, 0, 0);
             }

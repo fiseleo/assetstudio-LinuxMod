@@ -6,9 +6,7 @@ layout(push_constant) uniform Push { mat4 viewProjection; mat4 lightViewProjecti
 layout(location = 0) out vec4 lightPosition;
 
 void main() {
+    // the camera unflipped (not like a render texture's): the rows as ComputeScreenPos reads them
     gl_Position = push.viewProjection * vec4(position, 1.0);
-    // the game shaders' camera is flipped like a render texture's (_ProjectionParams.x = -1): their ComputeScreenPos
-    // reads the rows of the screen space shadows the other way
-    gl_Position.y = -gl_Position.y;
     lightPosition = push.lightViewProjection * vec4(position, 1.0);
 }
