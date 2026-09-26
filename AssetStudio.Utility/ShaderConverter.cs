@@ -1067,11 +1067,11 @@ namespace AssetStudio
         public List<(uint sampler, int index)> Samplers = new List<(uint, int)>();
         public List<(string name, int register)> ConstantBufferBindings = new List<(string, int)>();
 
-        /// <summary>A parameter entry of the blob (2021.3.10 and up): a hash, then the groups and the resources.</summary>
+        /// <summary>A parameter entry of the blob (2021.3.10 and up): the program version, then the groups and the resources.</summary>
         public static BlobProgramParameters ReadParameterEntry(EndianBinaryReader reader, long end)
         {
-            reader.ReadUInt32(); //hash
-            return Read(reader, 202012090, end, false);
+            var version = reader.ReadInt32();
+            return Read(reader, version >= 201802150 ? version : 202012090, end, false);
         }
 
         public static BlobProgramParameters Read(EndianBinaryReader reader, int programVersion, long end = -1, bool bindChannels = true)
@@ -1227,7 +1227,7 @@ namespace AssetStudio
             //202012090 - Unity 2021.2
             m_Version = reader.ReadInt32();
             //the blobs also hold parameter entries (2021.3.10 and up): they don't start with a program version
-            if (m_Version < 201509030 || m_Version > 203012310)
+            if (!IsProgramVersion(m_Version))
                 throw new InvalidDataException($"not a program (version {m_Version})");
             var limit = end >= 0 ? end : reader.BaseStream.Length;
             if (hasUpdatedGpuProgram && m_Version > 201806140)
@@ -1275,6 +1275,15 @@ namespace AssetStudio
             {
                 Parameters = null;
             }
+        }
+
+        //program versions are dates: YYYYMMDD and a digit (201509030 for Unity 5.3 ... 202012090 for 2021.2)
+        private static bool IsProgramVersion(int version)
+        {
+            var year = version / 100000;
+            var month = version / 1000 % 100;
+            var day = version / 10 % 100;
+            return year >= 2015 && year <= 2040 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
         }
 
         /// <summary>The parameters stored after the byte code (bind channels, constant buffers, resources), null when unreadable.</summary>

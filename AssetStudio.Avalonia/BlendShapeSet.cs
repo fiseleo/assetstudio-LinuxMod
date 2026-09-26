@@ -40,7 +40,7 @@ namespace AssetStudio.Avalonia
         }
 
         /// <summary>The blend shapes of the meshes of a converted model (<see cref="ImportedMorph"/>, in the mirrored space).</summary>
-        public static BlendShapeSet FromModel(ModelConverter model)
+        public static BlendShapeSet FromModel(IImported model)
         {
             var set = new BlendShapeSet();
             var offset = 0;

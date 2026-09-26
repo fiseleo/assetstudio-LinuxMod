@@ -66,7 +66,7 @@ namespace AssetStudio.Avalonia
         private readonly Vector3[] morphedNormals;
 
         /// <param name="vertices">the vertices of the meshes of the model, one after the other (mesh space)</param>
-        public ModelAnimator(ModelConverter model, Vector3[] vertices, Vector3[] normals)
+        public ModelAnimator(IImported model, Vector3[] vertices, Vector3[] normals)
         {
             var frames = new List<ImportedFrame>();
             var parentList = new List<int>();

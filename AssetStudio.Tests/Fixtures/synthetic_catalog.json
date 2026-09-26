@@ -1,0 +1,58 @@
+{
+ "m_LocatorId": "AddressablesMainContentCatalog",
+ "m_BuildResultHash": "5d1b0d6fd0bbd6c9a8e8d3b3b8d8c0aa",
+ "m_InstanceProviderData": {
+  "m_Id": "UnityEngine.ResourceManagement.ResourceProviders.InstanceProvider",
+  "m_ObjectType": {
+   "m_AssemblyName": "Unity.ResourceManager, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+   "m_ClassName": "UnityEngine.ResourceManagement.ResourceProviders.InstanceProvider"
+  },
+  "m_Data": ""
+ },
+ "m_SceneProviderData": {
+  "m_Id": "UnityEngine.ResourceManagement.ResourceProviders.SceneProvider",
+  "m_ObjectType": {
+   "m_AssemblyName": "Unity.ResourceManager, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+   "m_ClassName": "UnityEngine.ResourceManagement.ResourceProviders.SceneProvider"
+  },
+  "m_Data": ""
+ },
+ "m_ResourceProviderData": [],
+ "m_ProviderIds": [
+  "UnityEngine.ResourceManagement.ResourceProviders.AssetBundleProvider",
+  "UnityEngine.ResourceManagement.ResourceProviders.BundledAssetProvider",
+  "UnityEngine.ResourceManagement.ResourceProviders.SceneProvider"
+ ],
+ "m_InternalIds": [
+  "0#/characters_assets_all_0123456789abcdef0123456789abcdef.bundle",
+  "0#/shared_assets_all_fedcba9876543210fedcba9876543210.bundle",
+  "Assets/Characters/Hero.prefab",
+  "Assets/Textures/Hero_Albedo.png",
+  "Assets/Scenes/Level1.unity"
+ ],
+ "m_KeyDataString": "DgAAAAAcAAAAY2hhcmFjdGVyc19hc3NldHNfYWxsLmJ1bmRsZQAYAAAAc2hhcmVkX2Fzc2V0c19hbGwuYnVuZGxlAAQAAABIZXJvACAAAAAxMTExMjIyMjMzMzM0NDQ0NTU1NTY2NjY3Nzc3ODg4OAAKAAAAQ2hhcmFjdGVycwAIAAAAUGxheWFibGUACgAAAEhlcm9BbGJlZG8AIAAAADk5OTlhYWFhYmJiYmNjY2NkZGRkZWVlZWZmZmYwMDAwAAgAAABUZXh0dXJlcwAGAAAATGV2ZWwxACAAAABhYWFhMTExMWJiYmIyMjIyY2NjYzMzMzNkZGRkNDQ0NATpAwAABOoDAAAE6wMAAA==",
+ "m_BucketDataString": "DgAAAAQAAAABAAAAAAAAACUAAAABAAAAAQAAAEIAAAABAAAAAgAAAEsAAAABAAAAAgAAAHAAAAABAAAAAgAAAH8AAAABAAAAAgAAAIwAAAABAAAAAwAAAJsAAAABAAAAAwAAAMAAAAABAAAAAwAAAM0AAAABAAAABAAAANgAAAABAAAABAAAAP0AAAACAAAAAAAAAAEAAAACAQAAAQAAAAAAAAAHAQAAAQAAAAEAAAA=",
+ "m_EntryDataString": "BQAAAAAAAAAAAAAA/////wAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAP////8AAAAASQIAAAEAAAAAAAAAAgAAAAEAAAALAAAAAAAAAP////8CAAAAAQAAAAMAAAABAAAADAAAAAAAAAD/////BgAAAAIAAAAEAAAAAgAAAA0AAAAAAAAA/////wkAAAADAAAA",
+ "m_ExtraDataString": "B0xVbml0eS5SZXNvdXJjZU1hbmFnZXIsIFZlcnNpb249MC4wLjAuMCwgQ3VsdHVyZT1uZXV0cmFsLCBQdWJsaWNLZXlUb2tlbj1udWxsSlVuaXR5RW5naW5lLlJlc291cmNlTWFuYWdlbWVudC5SZXNvdXJjZVByb3ZpZGVycy5Bc3NldEJ1bmRsZVJlcXVlc3RPcHRpb25zrAEAAHsAIgBtAF8ASABhAHMAaAAiADoAIAAiADAAMQAyADMANAA1ADYANwA4ADkAYQBiAGMAZABlAGYAMAAxADIAMwA0ADUANgA3ADgAOQBhAGIAYwBkAGUAZgAiACwAIAAiAG0AXwBDAHIAYwAiADoAIAAxADIAMwA0ADUANgA3ACwAIAAiAG0AXwBCAHUAbgBkAGwAZQBOAGEAbQBlACIAOgAgACIAYwBoAGEAcgBhAGMAdABlAHIAcwBfAGEAcwBzAGUAdABzAF8AYQBsAGwAIgAsACAAIgBtAF8AQgB1AG4AZABsAGUAUwBpAHoAZQAiADoAIAA1ADYANwA4ADkALAAgACIAbQBfAFQAaQBtAGUAbwB1AHQAIgA6ACAAMAAsACAAIgBtAF8AQwBoAHUAbgBrAGUAZABUAHIAYQBuAHMAZgBlAHIAIgA6ACAAZgBhAGwAcwBlACwAIAAiAG0AXwBSAGUAZABpAHIAZQBjAHQATABpAG0AaQB0ACIAOgAgAC0AMQAsACAAIgBtAF8AUgBlAHQAcgB5AEMAbwB1AG4AdAAiADoAIAAwAH0AB0xVbml0eS5SZXNvdXJjZU1hbmFnZXIsIFZlcnNpb249MC4wLjAuMCwgQ3VsdHVyZT1uZXV0cmFsLCBQdWJsaWNLZXlUb2tlbj1udWxsSlVuaXR5RW5naW5lLlJlc291cmNlTWFuYWdlbWVudC5SZXNvdXJjZVByb3ZpZGVycy5Bc3NldEJ1bmRsZVJlcXVlc3RPcHRpb25zpAEAAHsAIgBtAF8ASABhAHMAaAAiADoAIAAiAGYAZQBkAGMAYgBhADkAOAA3ADYANQA0ADMAMgAxADAAZgBlAGQAYwBiAGEAOQA4ADcANgA1ADQAMwAyADEAMAAiACwAIAAiAG0AXwBDAHIAYwAiADoAIAA3ADYANQA0ADMAMgAxACwAIAAiAG0AXwBCAHUAbgBkAGwAZQBOAGEAbQBlACIAOgAgACIAcwBoAGEAcgBlAGQAXwBhAHMAcwBlAHQAcwBfAGEAbABsACIALAAgACIAbQBfAEIAdQBuAGQAbABlAFMAaQB6AGUAIgA6ACAAOQA4ADcANgA1ACwAIAAiAG0AXwBUAGkAbQBlAG8AdQB0ACIAOgAgADAALAAgACIAbQBfAEMAaAB1AG4AawBlAGQAVAByAGEAbgBzAGYAZQByACIAOgAgAGYAYQBsAHMAZQAsACAAIgBtAF8AUgBlAGQAaQByAGUAYwB0AEwAaQBtAGkAdAAiADoAIAAtADEALAAgACIAbQBfAFIAZQB0AHIAeQBDAG8AdQBuAHQAIgA6ACAAMAB9AA==",
+ "m_resourceTypes": [
+  {
+   "m_AssemblyName": "Unity.ResourceManager, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+   "m_ClassName": "UnityEngine.ResourceManagement.ResourceProviders.IAssetBundleResource"
+  },
+  {
+   "m_AssemblyName": "UnityEngine.CoreModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+   "m_ClassName": "UnityEngine.GameObject"
+  },
+  {
+   "m_AssemblyName": "UnityEngine.CoreModule, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+   "m_ClassName": "UnityEngine.Texture2D"
+  },
+  {
+   "m_AssemblyName": "Unity.ResourceManager, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+   "m_ClassName": "UnityEngine.ResourceManagement.ResourceProviders.SceneInstance"
+  }
+ ],
+ "m_InternalIdPrefixes": [
+  "{UnityEngine.AddressableAssets.Addressables.RuntimePath}/StandaloneWindows64"
+ ]
+}

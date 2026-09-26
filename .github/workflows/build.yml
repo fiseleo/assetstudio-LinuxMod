@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'main'
+      - 'linux-port'
     paths-ignore:
       - '**/LICENSE'
       - '**/README.md'
@@ -78,6 +79,9 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Test
+        run: dotnet test AssetStudio.Tests/AssetStudio.Tests.csproj -c Release --logger "console;verbosity=normal"
 
       - name: Build Linux release (Avalonia GUI + CLI)
         run: ./build-linux.sh
