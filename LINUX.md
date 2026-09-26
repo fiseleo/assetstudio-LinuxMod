@@ -43,15 +43,18 @@ Same layout and menus as the Windows GUI:
 - Load files / folders (menu, drag & drop, or command line arguments), extract bundles
 - Scene Hierarchy (checkboxes, regex search: `Enter` next match, `Shift` all, `Ctrl` check, `Alt` root),
   Asset List (regex filter, column sort, type filter, `Ctrl+A`, context menu), Asset Classes
-- Preview: Texture2D / Sprite (channel toggle `Ctrl+R/G/B/A`; wheel zoom, drag to pan, double-click = fit / 100%), text / shader / MonoBehaviour / AnimationClip,
-  fonts, audio info + playback (pause, loop, seek, volume), mesh and model 3D preview (Vulkan GPU renderer, see below: left drag rotate,
-  right drag pan, wheel zoom, `Ctrl+W` wireframe), Dump tab
+- Preview: Texture2D / Sprite (channel toggle `Ctrl+R/G/B/A`; wheel zoom, drag to pan, double-click = fit / 100%),
+  Cubemap (cross) / Texture2DArray / Texture3D / CubemapArray (all slices side by side), TerrainData (heightmap),
+  text / shader / MonoBehaviour / AnimationClip, fonts, audio info + playback (pause, loop, seek, volume),
+  mesh and model 3D preview (Vulkan GPU renderer, see below: left drag rotate, right drag pan, wheel zoom, `Ctrl+W` wireframe;
+  a bar under the view plays the model's animations and shows its skeleton), Dump tab (also for files built without type trees)
 - Export: Convert / Raw / Dump / JSON for all, selected or filtered assets, asset list XML,
   scene hierarchy JSON, class structures
 - Game selection, Unity version, UnityCN keys, AI versions, CABMap / AssetMap building (Misc. menu)
 - Asset Browser (Misc. menu): open an AssetMap (`.map`), filter it by regex per column, then load the files
   of the selected entries or export just the selected assets (files are loaded one at a time)
 - Export options dialog (same settings as Windows)
+- Options > Theme: follow the system, light or dark
 
 Settings are stored in `~/.config/AssetStudio/settings.json`. The log is shown in the panel at the
 bottom right and written to stdout (Debug menu). `Keys.json`, `Maps/` and `log.txt` live next to the executable, as on
@@ -85,12 +88,15 @@ Optional libraries are loaded from the `x64/` folder next to the executable usin
 ### Vulkan
 
 - **Model preview**: meshes and models are rendered on the GPU with Vulkan (offscreen, 4x MSAA, smooth shading with the
-  mesh normals, textured with each material's main texture, mipmapped). The device is picked automatically (discrete GPU > integrated > software lavapipe) and shown in the
+  mesh normals, textured with each material's main texture, mipmapped). Meshes are placed by their hierarchy and skinned by
+  their bones; the clips of the Animator's controller (with *Collect animations* on) or of legacy Animation components can be
+  played, paused and scrubbed, with the skeleton drawn on top (skinning on the CPU, vertices rewritten every frame). The device is picked automatically (discrete GPU > integrated > software lavapipe) and shown in the
   status bar / log. Without a usable Vulkan driver the built-in software renderer is used; force it with
   `ASSETSTUDIO_RENDERER=software`. The preview shaders are in `AssetStudio.Avalonia/Shaders` (GLSL, embedded as SPIR-V;
   rebuild with `Shaders/compile.sh`, needs `glslc`).
 - **Shaders**: on Linux, DirectX programs in exported `.shader` files are translated DirectX → Vulkan SPIR-V
-  (vkd3d-shader) → Vulkan GLSL (SPIRV-Cross), replacing the Windows-only HLSL decompiler. If that fails the vkd3d
+  (vkd3d-shader) → Vulkan GLSL (SPIRV-Cross), replacing the Windows-only HLSL decompiler. This covers D3D9 byte code,
+  DXBC (SM4/5) and DXIL (SM6, e.g. the D3D12 programs of Unity 6000.7). If that fails the vkd3d
   Direct3D assembly listing is written instead. The patch adds the Direct3D 9 instructions vkd3d cannot translate to SPIR-V
   on its own (`lit`, `dst`, `crs`, `sgn`, `expp`, `logp`), e.g. Unity's `lit`-based gamma conversion in the Standard shader. Programs that are already Vulkan (SPIR-V) are handled as before.
 
@@ -104,7 +110,10 @@ instead (play / stop only).
 - Linux 版 GUI 是 `AssetStudio.Avalonia`（Avalonia 跨平台介面），功能與選單與 Windows 版相同。
 - 執行：`dotnet run --project AssetStudio.Avalonia`；打包：`./build-linux.sh`，產生 `dist/AssetStudio-linux-x64`（含 GUI 與 CLI，不需安裝 .NET）。
 - 模型預覽使用 Vulkan GPU 算繪，會貼上材質的主貼圖（自動選擇顯示卡，狀態列會顯示；沒有 Vulkan 時改用軟體算繪，可用 `ASSETSTUDIO_RENDERER=software` 強制）。
-- Shader 匯出：DirectX 程式在 Linux 上改走 Vulkan：vkd3d-shader 轉成 SPIR-V，再由 SPIRV-Cross 反編譯成 Vulkan GLSL（取代 Windows 專用的 HLSL 反編譯器）。
+- 模型會依物件階層擺放並套用骨骼蒙皮；預覽下方的控制列可以選擇動畫（Animator 的 controller 或舊式 Animation 元件的 clip）播放、暫停、拖曳時間軸，並顯示骨架。
+- 貼圖預覽也支援 Cubemap（十字展開）、Texture2DArray / Texture3D / CubemapArray（所有 slice 並排）與 TerrainData 高度圖；Options > Theme 可切換跟隨系統／淺色／深色。
+- 沒有 TypeTree 的遊戲檔也能 Dump 或匯出任意類型的 JSON（內建各 Unity 版本的 TypeTree 資料庫）。
+- Shader 匯出：DirectX 程式在 Linux 上改走 Vulkan：vkd3d-shader 轉成 SPIR-V，再由 SPIRV-Cross 反編譯成 Vulkan GLSL（取代 Windows 專用的 HLSL 反編譯器），支援 D3D9、DXBC（SM4/5）與 DXIL（SM6，例如 Unity 6000.7 的 D3D12 程式）。
 - 貼圖解碼、FBX 匯出（`x64/libAssetStudio.FBXNative.so`，需 glibc 2.28 以上）都已內建；音訊沒有 FMOD 時會用 Fmod5Sharp 轉成 `.ogg`/`.wav`。
 - 重新編譯 FBX 原生庫：安裝 Linux 版 Autodesk FBX SDK 後執行 `FBXSDK_ROOT=... ./build-fbxnative-linux.sh`。
 - Asset Browser（Misc. 選單）：開啟 AssetMap（`.map`），各欄位可用正則篩選，可載入選取項目的檔案，或只匯出選取的資源。

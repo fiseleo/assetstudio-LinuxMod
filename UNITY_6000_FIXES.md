@@ -163,3 +163,25 @@ Shader platform 28 is D3D12 (6000.7, `ShaderCompilerPlatform.D3D12`, compiled wi
 are not public (34 = vertex and 37 = pixel in the UnityDataTools 6000.7 player); every program is a DXBC container
 behind a small header, holding DXIL or SM4/5 byte code, and is exported like a D3D11 program (DXIL goes through
 vkd3d-shader's DXIL front end). WebGPU (26) and Switch2 (27) programs are still skipped.
+
+## Texture classes and managed references (Linux port, 2026-09)
+
+Same method (type tree dumps of every version, then synthetic files written from those type trees at each change,
+since there are no public samples of most of these classes):
+
+| Class | Layout |
+|-------|--------|
+| Cubemap | Texture2D followed by `m_SourceTextures` (4.0+); six faces one after the other in the image data, stored top down |
+| Texture3D | 4.0: `m_Width, m_Height, m_Depth, m_Format, m_MipMap` (5.2: `m_MipCount`), `m_DataSize, m_TextureSettings`, 5.4: `m_IsReadable`, 5.6: `m_StreamData` |
+| Texture2DArray | 5.4: `m_Width, m_Height, m_Depth, m_Format, m_MipCount, m_DataSize, m_TextureSettings, m_ColorSpace, m_IsReadable`, 5.6: `m_StreamData`, 2023.2: `m_MipsStripped`, `m_IgnoreMipmapLimit`, `m_MipmapLimitGroupName` |
+| CubemapArray | 5.5: `m_Width, m_CubemapCount, m_Format, m_MipCount, m_DataSize, m_TextureSettings, m_ColorSpace, m_IsReadable`, 5.6: `m_StreamData` |
+| all three | 2019.1: `m_ColorSpace` and `m_Format` move to the front and `m_Format` becomes a GraphicsFormat; 2020.2: `m_UsageMode` |
+
+`[SerializeReference]` (MonoBehaviour): registry version 2 (2021.2 – 6000.6) is a `ManagedReferencesRegistry references`
+node at the end of the type tree, `ReferencedObjectData` has the layout of the matching reference type of the file.
+In 6000.7 (version 3, SerializedFile format 26) the type tree has no registry node: a frame
+`{ int version; int size; ReferencedManagedType types[]; { SInt64 rid; int type; int dataSize } objects[]; data }`
+comes in front of the first script field, which has TypeFlags `0x10`.
+
+Shader platform 28 is D3D12 (6000.7, compiled with dxcompiler); its programs are DXBC containers (DXIL or SM4/5) and are
+exported like D3D11 programs. Their GPU program types (34 vertex, 37 pixel seen) are not public.

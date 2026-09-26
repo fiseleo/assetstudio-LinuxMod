@@ -26,10 +26,11 @@ AssetStudio is a **Unity asset extraction tool** that reads Unity game files and
 
 ### Key Facts
 
-- **Language**: C# (.NET 10)
-- **Supported Unity Versions**: Unity 2.x through Unity 6 (6000.x series)
+- **Language**: C# (.NET 8; .NET 10 targets are added when the .NET 10 SDK is installed)
+- **Supported Unity Versions**: Unity 2.x through Unity 6000.7 (SerializedFile formats up to 26)
 - **Primary Users**: Game modders, asset extractors, researchers
-- **Interface**: Both GUI (AssetStudio.GUI) and CLI (AssetStudio.CLI)
+- **Interface**: CLI (AssetStudio.CLI, Windows and Linux), Windows GUI (AssetStudio.GUI, WinForms),
+  cross-platform GUI (AssetStudio.Avalonia, used on Linux)
 - **Critical Feature**: Multi-threaded loading/export for performance
 
 ### Project Structure
@@ -37,48 +38,54 @@ AssetStudio is a **Unity asset extraction tool** that reads Unity game files and
 ```
 AssetStudio/                    # Core library (asset parsing logic)
 ├── Classes/                    # Unity class deserializers
-│   ├── Shader.cs              # Shader parsing (COMPLEX - Unity 6 issues)
-│   ├── Texture2D.cs           # Texture parsing
+│   ├── Shader.cs              # Shader parsing (Unity 5.x - 6000.7)
+│   ├── Texture2D.cs           # Texture parsing (Cubemap derives from it)
+│   ├── Texture2DArray.cs, Texture3D.cs, CubemapArray.cs, GraphicsFormat.cs
 │   ├── Mesh.cs                # 3D model parsing
 │   └── ...
 ├── AssetsManager.cs           # Main orchestrator (parallel loading)
-├── SerializedFile.cs          # Unity asset file parser
+├── SerializedFile.cs          # Unity asset file parser (formats up to 26)
 ├── BundleFile.cs              # Unity bundle decompression
-└── TypeTree.cs                # Runtime type information
+├── TypeTree.cs                # Runtime type information
+├── TypeTreeHelper.cs          # Reads objects through a type tree (Dump / JSON, [SerializeReference])
+├── TypeTreeDatabase.cs        # Release type trees of every Unity version (Resources/lzma.tpk)
+└── TypeFlags.cs               # Which types are parsed / exported
 
 AssetStudio.CLI/               # Command-line interface
 ├── Program.cs                 # CLI entry point
 └── Exporter.cs                # Batch export logic
 
-AssetStudio.GUI/               # Windows Forms GUI
+AssetStudio.GUI/               # Windows Forms GUI (Windows only)
 ├── MainForm.cs                # Main window
 ├── AssetBrowser.cs            # Asset list view
 └── Studio.cs                  # GUI-specific orchestration
 
+AssetStudio.Avalonia/          # Cross-platform GUI (Linux), same menus as the WinForms one
+├── Views/MainWindow.axaml(.cs)
+├── Studio.cs, Exporter.cs
+├── MeshRenderer.cs            # Model preview (software renderer)
+├── VulkanMeshRenderer.cs      # Model preview on the GPU (Silk.NET.Vulkan)
+└── ModelAnimator.cs           # Frame hierarchy, skinning and animation playback for the preview
+
 AssetStudio.Utility/           # Export utilities
 ├── Texture2DConverter.cs      # Image export (PNG, JPEG, etc.)
+├── TextureImageExtensions.cs  # Faces / slices of Cubemap, Texture2DArray, Texture3D, CubemapArray
 ├── ModelConverter.cs          # 3D model export (FBX, OBJ)
 ├── AudioClipConverter.cs      # Audio export (WAV, MP3)
-└── ShaderConverter.cs         # Shader text export
+├── ShaderConverter.cs         # Shader text export
+├── Vkd3dShader.cs             # DirectX -> Vulkan SPIR-V -> GLSL (Linux)
+└── TerrainDataConverter.cs    # TerrainData heightmap
 
 AssetStudio.FBXWrapper/        # FBX export wrapper
 AssetStudio.FBXNative/         # Native FBX library (C++)
 AssetStudio.PInvoke/           # Platform invoke utilities
 ```
 
-### Current State (November 2025)
+### Current State
 
-**Recent Work:**
-
-- ✅ **v2.3.0** (Nov 15): Unity 6 support, .NET 10 upgrade
-- ✅ **v2.3.1** (Nov 19): TypeTree deserialization fixes, graceful error handling
-- 🔄 **Ongoing**: Unity 6 shader serialization format issues (1,082 parse failures)
-
-**Known Issues:**
-
-- Unity 6 (6000.0.58f2) changed Shader serialization format without documentation
-- ~1,082 shaders fail to fully parse (Marvel Snap game on Unity 6000.0.58f2)
-- Error handling implemented to prevent crashes, but full parsing not yet achieved
+See [CURRENT_STATE.md](CURRENT_STATE.md) (kept up to date) and [AI_QUICK_REFERENCE.md](AI_QUICK_REFERENCE.md).
+In short: Unity 2.x to 6000.7 are read, Unity 6 shaders are fully parsed (the v2.3.x error-tolerant workarounds
+described below are history), the tool runs on Windows and Linux.
 
 ---
 
@@ -337,30 +344,20 @@ else if (version[0] >= 2023)
 
 ### Shader Format Changes (Critical Area)
 
-**Problem**: Unity 6 changed shader serialization without documentation.
+Shader layouts changed in many 6000.x releases (see the table in [UNITY_6000_FIXES.md](UNITY_6000_FIXES.md)). They are
+now read exactly; the v2.3.x "skip / tolerate" handling is gone. When a new Unity version breaks shaders:
 
-**Symptoms**:
-
-- "Unable to read beyond the end of the stream"
-- "String length [large number] exceeds remaining bytes"
-- Exceptions in `SerializedPass` constructor
-
-**Current Approach** (v2.3.1):
-
-- 4-layer error handling (Shader → SerializedShader → SerializedSubShader → SerializedPass)
-- Graceful degradation (shaders load with partial data)
-- Verbose logging for debugging
-
-**If you need to update Shader.cs**:
-
-1. Read entire file to understand structure
-2. Check all 4 constructor levels (Shader, SerializedShader, SerializedSubShader, SerializedPass)
-3. Test with Unity 6 game files (Marvel Snap, etc.)
-4. Ensure error handling preserves basic shader info
+1. Find the change in the type tree dumps (AssetRipper/TypeTreeDumps `InfoJson`), bisecting over versions
+2. Update `Shader.cs` with a version check (or `HasField` on the type tree for alpha / beta changes)
+3. Compare the manual read with `TypeTreeHelper.ReadType` on real files of that version
+4. Export and check the programs: 6000.x players keep them in `m_PlayerSubPrograms`; platform 28 is D3D12
 
 ### Testing Approach
 
-**No automated unit tests** (reverse engineering makes this hard).
+**No automated unit tests** in the repository. What was used on the `linux-port` branch (details in
+[CURRENT_STATE.md](CURRENT_STATE.md)): UnityDataTools `TestCommon/Data` samples (2019.4 to 6000.7), type tree dumps to find
+layout changes, differential checks (manual reader vs type tree, file type tree vs `TypeTreeDatabase`), synthetic
+SerializedFiles written from the release type trees for classes without samples, and an Avalonia.Headless harness.
 
 **Manual Testing:**
 
@@ -456,9 +453,14 @@ namespace AssetStudio
 }
 ```
 
-2. **Register in ObjectReader** (if needed for automatic deserialization)
+2. **Register it** in the class switch of `AssetsManager.ReadAssets`, and in `TypeFlags.AddedTypes` (settings files of
+   older versions don't list it), then in the `ProcessAssetData` / `ExportConvertFile` switches of the three front ends
+   (`AssetStudio.CLI`, `AssetStudio.Avalonia`, `AssetStudio.GUI`)
 
-3. **Test with real Unity files**
+3. **Test with real Unity files** of the versions where the class changes
+
+A class without its own reader can still be dumped and exported as JSON through its type tree (the file's, or
+`TypeTreeDatabase` for files built without type trees); TerrainData works that way.
 
 ### Task 2: Fixing Version-Specific Parse Failures
 
@@ -669,7 +671,15 @@ m_SomeField = reader.ReadInt32();
 
 ## Version History & Context
 
-### v2.3.1 (November 19, 2025) - Current
+### linux-port branch (September 2026)
+
+- Linux: `AssetStudio.Avalonia` GUI, CLI on Linux, AppImage / `.deb`, Vulkan model preview, DirectX shaders translated to Vulkan GLSL
+- Unity 6000.5 to 6000.7 (SerializedFile formats 23 and 26, class layouts), Unity 6 shaders fully parsed, D3D12 programs
+- `[SerializeReference]`, Cubemap / Texture2DArray / Texture3D / CubemapArray, TerrainData heightmap
+- Any class dumped / exported as JSON, also from files without type trees (`TypeTreeDatabase`)
+- Avalonia: animation playback and skeleton in the model preview, themes
+
+### v2.3.1 (November 19, 2025)
 
 **Changes:**
 
@@ -777,6 +787,10 @@ dotnet build AssetStudio.CLI/AssetStudio.CLI.csproj -c Release
 
 # GUI only
 dotnet build AssetStudio.GUI/AssetStudio.GUI.csproj -c Release
+
+# Linux GUI (run) and Linux release packages
+dotnet run --project AssetStudio.Avalonia
+./build-linux.sh && ./build-packages.sh
 
 # Clean
 dotnet clean AssetStudio.sln
