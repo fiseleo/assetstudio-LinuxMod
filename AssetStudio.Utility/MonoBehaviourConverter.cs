@@ -31,6 +31,7 @@ namespace AssetStudio
                 return;
             switch (helper.ManagedReferencesVersion)
             {
+                case 1:
                 case 2:
                     helper.AddManagedReferencesRegistry(m_Type.m_Nodes, 1);
                     break;

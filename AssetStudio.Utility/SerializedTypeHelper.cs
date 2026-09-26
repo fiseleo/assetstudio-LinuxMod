@@ -21,8 +21,9 @@ namespace AssetStudio
         }
 
         /// <summary>
-        /// Layout of [SerializeReference] fields: 0 = not supported, 2 = registry at the end of the object (2021.2 to 6000.6),
-        /// 3 = registry frame in front of the first script field (6000.7 and up).
+        /// Layout of [SerializeReference] fields: 0 = not supported, 1 = int ids and a Terminus-ended registry (2019.3 to 2021.1),
+        /// 2 = SInt64 ids and a registry at the end of the object (2021.2 to 6000.6), 3 = registry frame in front of the
+        /// first script field (6000.7 and up).
         /// </summary>
         public int ManagedReferencesVersion
         {
@@ -32,6 +33,8 @@ namespace AssetStudio
                     return 3;
                 if (version[0] > 2021 || (version[0] == 2021 && version[1] >= 2))
                     return 2;
+                if (version[0] > 2019 || (version[0] == 2019 && version[1] >= 3))
+                    return 1;
                 return 0;
             }
         }
@@ -39,13 +42,26 @@ namespace AssetStudio
         public void AddManagedReference(List<TypeTreeNode> nodes, string type, string name, int indent)
         {
             nodes.Add(new TypeTreeNode(type, name, indent, false) { m_TypeFlags = 2 });
-            nodes.Add(new TypeTreeNode("SInt64", "rid", indent + 1, false));
+            if (ManagedReferencesVersion == 1)
+                nodes.Add(new TypeTreeNode("int", "id", indent + 1, false));
+            else
+                nodes.Add(new TypeTreeNode("SInt64", "rid", indent + 1, false));
         }
 
         public void AddManagedReferencesRegistry(List<TypeTreeNode> nodes, int indent)
         {
             nodes.Add(new TypeTreeNode("ManagedReferencesRegistry", "references", indent, false) { m_TypeFlags = 4 });
             nodes.Add(new TypeTreeNode("int", "version", indent + 1, false));
+            if (ManagedReferencesVersion == 1) //the objects follow each other until a Terminus type
+            {
+                nodes.Add(new TypeTreeNode("ReferencedObject", "00000000", indent + 1, false));
+                nodes.Add(new TypeTreeNode("ReferencedManagedType", "type", indent + 2, false));
+                AddString(nodes, "class", indent + 3);
+                AddString(nodes, "ns", indent + 3);
+                AddString(nodes, "asm", indent + 3);
+                nodes.Add(new TypeTreeNode("ReferencedObjectData", "data", indent + 2, false));
+                return;
+            }
             nodes.Add(new TypeTreeNode("vector", "RefIds", indent + 1, false));
             nodes.Add(new TypeTreeNode("Array", "Array", indent + 2, true));
             nodes.Add(new TypeTreeNode("int", "size", indent + 3, false));
