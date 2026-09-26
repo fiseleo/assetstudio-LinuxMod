@@ -58,6 +58,9 @@ namespace AssetStudio.Avalonia.Views
         private Point lastPointer;
         private bool meshDragging;
         private bool meshRenderScheduled;
+        private DispatcherTimer animationTimer;
+        private DateTime lastAnimationTick;
+        private bool suppressAnimationEvents;
         private Process audioProcess;
         private string audioTempFile;
         private AudioPlayer audioPlayer;
@@ -1447,6 +1450,9 @@ namespace AssetStudio.Avalonia.Views
             StopAudio();
             imagePreviewHost.IsVisible = false;
             meshPreviewHost.IsVisible = false;
+            StopAnimation();
+            animationBar.IsVisible = false;
+            skeletonCanvas.Children.Clear();
             meshRenderer?.Dispose();
             meshRenderer = null;
             textPreviewBox.IsVisible = false;
@@ -1564,10 +1570,10 @@ namespace AssetStudio.Avalonia.Views
                         StatusStripUpdate("Can be exported/previewed as JSON if data is a valid JSON (check XOR).");
                         break;
                     case GameObject m_GameObject when Settings.Default.enableModelPreview:
-                        await PreviewModel(assetItem, () => new ModelConverter(m_GameObject, PreviewModelOptions(), Array.Empty<AnimationClip>()));
+                        await PreviewModel(assetItem, () => new ModelConverter(m_GameObject, PreviewModelOptions(), LegacyAnimationClips(m_GameObject)));
                         break;
                     case Animator m_Animator when Settings.Default.enableModelPreview:
-                        await PreviewModel(assetItem, () => new ModelConverter(m_Animator, PreviewModelOptions(), Array.Empty<AnimationClip>()));
+                        await PreviewModel(assetItem, () => new ModelConverter(m_Animator, PreviewModelOptions(), m_Animator.m_GameObject.TryGet(out var animatorObject) ? LegacyAnimationClips(animatorObject) : null));
                         break;
                     case GameObject m_GameObject:
                         PreviewGameObject(assetItem, m_GameObject);
@@ -2231,6 +2237,7 @@ namespace AssetStudio.Avalonia.Views
             meshRenderer = renderer;
             meshPreviewHost.IsVisible = true;
             ShowInfo(assetItem);
+            SetupAnimationBar(renderer);
             ScheduleMeshRender();
             meshPreviewHost.Focus();
             StatusStripUpdate($"{renderer.BackendName} | Left drag = rotate | Right drag = move | Wheel = zoom | Ctrl+W = wireframe");
@@ -2271,7 +2278,174 @@ namespace AssetStudio.Avalonia.Views
             }
             meshImage.Source = null;
             meshImage.Source = meshBitmap;
+            DrawSkeleton(width, height, scaling);
         }
+
+        #region Model animation
+
+        /// <summary>
+        /// The clips of the legacy Animation components in the hierarchy of a GameObject (ModelConverter only collects
+        /// the clips of an Animator), null when there are none.
+        /// </summary>
+        private static AnimationClip[] LegacyAnimationClips(GameObject root)
+        {
+            var clips = new List<AnimationClip>();
+            void Collect(Transform transform, int depth)
+            {
+                if (depth > 256 || !transform.m_GameObject.TryGet(out var gameObject))
+                    return;
+                if (gameObject.m_Animation != null)
+                {
+                    foreach (var pptr in gameObject.m_Animation.m_Animations)
+                    {
+                        if (pptr.TryGet(out var clip) && !clips.Contains(clip))
+                            clips.Add(clip);
+                    }
+                }
+                foreach (var child in transform.m_Children)
+                {
+                    if (child.TryGet(out var childTransform))
+                        Collect(childTransform, depth + 1);
+                }
+            }
+            if (root.m_Transform != null)
+                Collect(root.m_Transform, 0);
+            return clips.Count > 0 ? clips.ToArray() : null;
+        }
+
+        private void SetupAnimationBar(MeshRenderer renderer)
+        {
+            StopAnimation();
+            var animator = renderer.Animator;
+            if (animator == null || (animator.ClipCount == 0 && !animator.HasSkeleton))
+            {
+                animationBar.IsVisible = false;
+                return;
+            }
+            suppressAnimationEvents = true;
+            var items = new List<string> { animator.ClipCount == 0 ? "(no animation)" : "(rest pose)" };
+            for (int i = 0; i < animator.ClipCount; i++)
+                items.Add(animator.ClipName(i));
+            clipComboBox.ItemsSource = items;
+            clipComboBox.SelectedIndex = 0;
+            clipComboBox.IsEnabled = animator.ClipCount > 0;
+            skeletonCheckBox.IsVisible = animator.HasSkeleton;
+            skeletonCheckBox.IsChecked = Settings.Default.showSkeleton;
+            suppressAnimationEvents = false;
+            UpdateAnimationControls();
+            animationBar.IsVisible = true;
+        }
+
+        private void UpdateAnimationControls()
+        {
+            var renderer = meshRenderer;
+            var hasClip = renderer?.Animator != null && renderer.Clip >= 0;
+            animationPlayButton.IsEnabled = hasClip;
+            animationSlider.IsEnabled = hasClip;
+            animationPlayButton.Content = animationTimer?.IsEnabled == true ? "Pause" : "Play";
+            suppressAnimationEvents = true;
+            var duration = hasClip ? renderer.Animator.ClipDuration(renderer.Clip) : 0;
+            animationSlider.Maximum = Math.Max(duration, 0.001);
+            animationSlider.Value = hasClip ? renderer.Time : 0;
+            suppressAnimationEvents = false;
+            animationTimeLabel.Text = hasClip ? $"{renderer.Time:0.00} / {duration:0.00} s" : "";
+        }
+
+        private void StopAnimation()
+        {
+            animationTimer?.Stop();
+        }
+
+        private void Clip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressAnimationEvents || meshRenderer?.Animator == null)
+                return;
+            var clip = clipComboBox.SelectedIndex - 1;
+            meshRenderer.SetPose(clip, 0);
+            if (clip >= 0)
+                StartAnimation();
+            else
+                StopAnimation();
+            UpdateAnimationControls();
+            ScheduleMeshRender();
+        }
+
+        private void StartAnimation()
+        {
+            if (animationTimer == null)
+            {
+                animationTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Render, AnimationTimer_Tick);
+            }
+            lastAnimationTick = DateTime.UtcNow;
+            animationTimer.Start();
+        }
+
+        private void AnimationTimer_Tick(object sender, EventArgs e)
+        {
+            var renderer = meshRenderer;
+            if (renderer?.Animator == null || renderer.Clip < 0 || !meshPreviewHost.IsVisible)
+            {
+                StopAnimation();
+                return;
+            }
+            var now = DateTime.UtcNow;
+            var elapsed = (float)(now - lastAnimationTick).TotalSeconds;
+            lastAnimationTick = now;
+            var duration = renderer.Animator.ClipDuration(renderer.Clip);
+            var time = duration > 0 ? (renderer.Time + elapsed) % duration : 0;
+            renderer.SetPose(renderer.Clip, time);
+            UpdateAnimationControls();
+            ScheduleMeshRender();
+        }
+
+        private void AnimationPlay_Click(object sender, RoutedEventArgs e)
+        {
+            if (animationTimer?.IsEnabled == true)
+                StopAnimation();
+            else if (meshRenderer?.Clip >= 0)
+                StartAnimation();
+            UpdateAnimationControls();
+        }
+
+        private void AnimationSlider_ValueChanged(object sender, global::Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            if (suppressAnimationEvents || meshRenderer?.Animator == null || meshRenderer.Clip < 0)
+                return;
+            StopAnimation();
+            meshRenderer.SetPose(meshRenderer.Clip, (float)animationSlider.Value);
+            UpdateAnimationControls();
+            ScheduleMeshRender();
+        }
+
+        private void Skeleton_Click(object sender, RoutedEventArgs e)
+        {
+            Settings.Default.showSkeleton = skeletonCheckBox.IsChecked == true;
+            Settings.Default.Save();
+            ScheduleMeshRender();
+        }
+
+        // the bar sits on the mesh view: don't rotate the model when clicking it
+        private void AnimationBar_PointerPressed(object sender, PointerPressedEventArgs e) => e.Handled = true;
+
+        private void DrawSkeleton(int width, int height, double scaling)
+        {
+            skeletonCanvas.Children.Clear();
+            if (meshRenderer?.Animator?.HasSkeleton != true || skeletonCheckBox.IsChecked != true || !animationBar.IsVisible)
+                return;
+            var brush = new global::Avalonia.Media.SolidColorBrush(global::Avalonia.Media.Color.FromRgb(255, 200, 40));
+            foreach (var (child, parent) in meshRenderer.SkeletonLines(width, height))
+            {
+                skeletonCanvas.Children.Add(new global::Avalonia.Controls.Shapes.Line
+                {
+                    StartPoint = new Point(parent.X / scaling, parent.Y / scaling),
+                    EndPoint = new Point(child.X / scaling, child.Y / scaling),
+                    Stroke = brush,
+                    StrokeThickness = 1.5,
+                });
+            }
+        }
+
+        #endregion
 
         private void Mesh_SizeChanged(object sender, SizeChangedEventArgs e) => ScheduleMeshRender();
 

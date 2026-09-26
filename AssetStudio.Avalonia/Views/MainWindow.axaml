@@ -244,7 +244,25 @@
               <Border x:Name="meshPreviewHost" IsVisible="False" Background="#FF2A3238" ClipToBounds="True" Focusable="True"
                       PointerPressed="Mesh_PointerPressed" PointerMoved="Mesh_PointerMoved" PointerReleased="Mesh_PointerReleased"
                       PointerWheelChanged="Mesh_PointerWheelChanged" SizeChanged="Mesh_SizeChanged">
-                <Image x:Name="meshImage" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                <Grid>
+                  <Image x:Name="meshImage" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                  <Canvas x:Name="skeletonCanvas" IsHitTestVisible="False" />
+                  <!-- animations and skeleton of a model -->
+                  <Border x:Name="animationBar" IsVisible="False" VerticalAlignment="Bottom" Background="#B0000000" Padding="6,4"
+                          PointerPressed="AnimationBar_PointerPressed">
+                    <!-- dark controls on the dark bar whatever the theme -->
+                    <ThemeVariantScope RequestedThemeVariant="Dark">
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" >
+                      <ComboBox x:Name="clipComboBox" Grid.Column="0" MinWidth="160" MaxWidth="320" SelectionChanged="Clip_SelectionChanged" />
+                      <Button x:Name="animationPlayButton" Grid.Column="1" Content="Play" Margin="6,0" MinWidth="64" Click="AnimationPlay_Click" />
+                      <Slider x:Name="animationSlider" Grid.Column="2" Minimum="0" Maximum="1" VerticalAlignment="Center" Margin="4,0"
+                              ValueChanged="AnimationSlider_ValueChanged" />
+                      <TextBlock x:Name="animationTimeLabel" Grid.Column="3" VerticalAlignment="Center" MinWidth="90" Margin="6,0" />
+                      <CheckBox x:Name="skeletonCheckBox" Grid.Column="4" Content="Skeleton" Click="Skeleton_Click" />
+                    </Grid>
+                    </ThemeVariantScope>
+                  </Border>
+                </Grid>
               </Border>
               <TextBox x:Name="textPreviewBox" Classes="mono" IsVisible="False" IsReadOnly="True" AcceptsReturn="True"
                        TextWrapping="NoWrap" BorderThickness="0" />

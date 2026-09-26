@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace AssetStudio.Avalonia
@@ -27,6 +28,7 @@ namespace AssetStudio.Avalonia
         private readonly DrawRange[] ranges;
         private readonly PreviewTexture[] textures;
         private VulkanMesh gpuMesh;
+        private bool gpuVerticesChanged;
         private readonly Vector3 center;
         private readonly float radius;
 
@@ -40,6 +42,38 @@ namespace AssetStudio.Avalonia
         public int VertexCount => vertices.Length;
         public int TriangleCount => indices.Length / 3;
         public int TextureCount => textures.Length;
+
+        /// <summary>Poses the model (skinning, animations); null for a single mesh.</summary>
+        public ModelAnimator Animator { get; private set; }
+        public int Clip { get; private set; } = -1;
+        public float Time { get; private set; }
+
+        /// <summary>Places the vertices for a clip of <see cref="Animator"/> at a time (clip -1: rest pose).</summary>
+        public void SetPose(int clip, float time)
+        {
+            if (Animator == null)
+                return;
+            Clip = clip;
+            Time = time;
+            Animator.Pose(clip, time, vertices, normals);
+            gpuVerticesChanged = true;
+        }
+
+        /// <summary>The bones of the current pose as lines in pixels of a render of this size.</summary>
+        public IEnumerable<(Vector2 child, Vector2 parent)> SkeletonLines(int width, int height)
+        {
+            if (Animator == null)
+                yield break;
+            var rotation = Matrix4x4.CreateRotationY(Yaw) * Matrix4x4.CreateRotationX(Pitch);
+            var scale = Math.Min(width, height) * 0.45f * Zoom / radius;
+            Vector2 Project(Vector3 v)
+            {
+                var p = Vector3.Transform(v - center, rotation);
+                return new Vector2(width / 2f + (p.X + Pan.X * radius) * scale, height / 2f - (p.Y + Pan.Y * radius) * scale);
+            }
+            foreach (var (child, parent) in Animator.SkeletonLines())
+                yield return (Project(child), Project(parent));
+        }
 
         /// <summary>"Vulkan (device)" or "Software", for the status bar.</summary>
         public string BackendName => VulkanMeshRenderer.Instance is { } gpu ? $"Vulkan ({gpu.DeviceName})" : "Software";
@@ -164,7 +198,14 @@ namespace AssetStudio.Avalonia
                 hasNormals |= mesh.hasNormal;
                 offset += mesh.VertexList.Count;
             }
-            return new MeshRenderer(verts, hasNormals ? norms : null, indices.ToArray(), uvs, ranges.ToArray(), textures.ToArray());
+            // the vertices are in the space of their mesh: place them with the frame hierarchy (and bones) at rest
+            ModelAnimator animator = null;
+            if (model.RootFrame != null)
+            {
+                animator = new ModelAnimator(model, verts, hasNormals ? norms : null);
+                animator.Pose(-1, 0, verts, hasNormals ? norms : null);
+            }
+            return new MeshRenderer(verts, hasNormals ? norms : null, indices.ToArray(), uvs, ranges.ToArray(), textures.ToArray()) { Animator = animator };
         }
 
         private static (int, Vector2, Vector2) FindMainTexture(ModelConverter model, string materialName,
@@ -213,6 +254,11 @@ namespace AssetStudio.Avalonia
             {
                 try
                 {
+                    if (gpuMesh != null && gpuVerticesChanged)
+                    {
+                        gpu.UpdateVertices(gpuMesh, vertices, normals);
+                    }
+                    gpuVerticesChanged = false;
                     gpuMesh ??= gpu.Upload(vertices, normals, uvs, indices, ranges, textures);
                     var (mvp, view) = Camera(width, height);
                     return gpu.Render(gpuMesh, width, height, mvp, view, WireframeMode);

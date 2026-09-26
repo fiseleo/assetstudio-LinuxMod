@@ -968,6 +968,29 @@ namespace AssetStudio.Avalonia
             return mesh;
         }
 
+        /// <summary>
+        /// New positions and normals for the vertices of an uploaded mesh (an animation frame). The vertex memory is
+        /// host visible and every frame is waited for, so it can be written directly.
+        /// </summary>
+        public void UpdateVertices(VulkanMesh mesh, Vector3[] vertices, Vector3[] normals)
+        {
+            void* mapped;
+            Check(vk.MapMemory(device, mesh.VertexMemory, 0, Vk.WholeSize, 0, &mapped), "vkMapMemory");
+            var data = new Span<float>(mapped, Math.Max(1, vertices.Length) * VertexFloats);
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                var o = i * VertexFloats;
+                var v = vertices[i];
+                data[o] = v.X; data[o + 1] = v.Y; data[o + 2] = v.Z;
+                if (normals != null && i < normals.Length)
+                {
+                    var n = normals[i];
+                    data[o + 3] = n.X; data[o + 4] = n.Y; data[o + 5] = n.Z;
+                }
+            }
+            vk.UnmapMemory(device, mesh.VertexMemory);
+        }
+
         internal void Free(VulkanMesh mesh)
         {
             if (device.Handle == 0)
