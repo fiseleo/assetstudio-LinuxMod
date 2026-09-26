@@ -931,8 +931,14 @@ namespace AssetStudio.GUI
                     case GameObject m_GameObject when Properties.Settings.Default.enableModelPreview:
                         PreviewGameObject(m_GameObject);
                         break;
+                    case Texture m_Texture when m_Texture.HasImages():
+                        PreviewTexture2D(assetItem, m_Texture);
+                        break;
                     case Texture2D m_Texture2D:
                         PreviewTexture2D(assetItem, m_Texture2D);
+                        break;
+                    case Object m_Object when m_Object.type == ClassIDType.TerrainData:
+                        PreviewTerrainData(assetItem, m_Object);
                         break;
                     case AudioClip m_AudioClip:
                         PreviewAudioClip(assetItem, m_AudioClip);
@@ -986,22 +992,48 @@ namespace AssetStudio.GUI
             }
         }
 
-        private void PreviewTexture2D(AssetItem assetItem, Texture2D m_Texture2D)
+        // Texture2D, or the faces / slices of a Cubemap, Texture2DArray, Texture3D, CubemapArray side by side
+        private void PreviewTexture2D(AssetItem assetItem, Texture m_Texture)
         {
-            var image = m_Texture2D.ConvertToImage(true);
+            var image = m_Texture.HasImages() ? m_Texture.ConvertToPreview(true) : ((Texture2D)m_Texture).ConvertToImage(true);
             if (image != null)
             {
-                var bitmap = new DirectBitmap(image.ConvertToBytes(), m_Texture2D.m_Width, m_Texture2D.m_Height);
+                var bitmap = new DirectBitmap(image.ConvertToBytes(), image.Width, image.Height);
                 image.Dispose();
-                assetItem.InfoText = $"Width: {m_Texture2D.m_Width}\nHeight: {m_Texture2D.m_Height}\nFormat: {m_Texture2D.m_TextureFormat}";
-                switch (m_Texture2D.m_TextureSettings.m_FilterMode)
+                GLTextureSettings settings;
+                switch (m_Texture)
+                {
+                    case Texture2DArray m_Texture2DArray:
+                        assetItem.InfoText = $"Width: {m_Texture2DArray.m_Width}\nHeight: {m_Texture2DArray.m_Height}\nSlices: {m_Texture2DArray.m_Depth}\nFormat: {FormatName(m_Texture2DArray.m_GraphicsFormat, m_Texture2DArray.m_TextureFormat)}";
+                        settings = m_Texture2DArray.m_TextureSettings;
+                        break;
+                    case Texture3D m_Texture3D:
+                        assetItem.InfoText = $"Width: {m_Texture3D.m_Width}\nHeight: {m_Texture3D.m_Height}\nDepth: {m_Texture3D.m_Depth}\nFormat: {FormatName(m_Texture3D.m_GraphicsFormat, m_Texture3D.m_TextureFormat)}";
+                        settings = m_Texture3D.m_TextureSettings;
+                        break;
+                    case CubemapArray m_CubemapArray:
+                        assetItem.InfoText = $"Face size: {m_CubemapArray.m_Width}\nCubemaps: {m_CubemapArray.m_CubemapCount}\nFormat: {FormatName(m_CubemapArray.m_GraphicsFormat, m_CubemapArray.m_TextureFormat)}";
+                        settings = m_CubemapArray.m_TextureSettings;
+                        break;
+                    default:
+                        var m_Texture2D = (Texture2D)m_Texture;
+                        assetItem.InfoText = m_Texture2D is Cubemap ? $"Face size: {m_Texture2D.m_Width}" : $"Width: {m_Texture2D.m_Width}\nHeight: {m_Texture2D.m_Height}";
+                        assetItem.InfoText += $"\nFormat: {m_Texture2D.m_TextureFormat}";
+                        settings = m_Texture2D.m_TextureSettings;
+                        break;
+                }
+                if (m_Texture.HasImages() && m_Texture.GetImageCount() > (m_Texture.IsCubemap() ? 6 : 1))
+                {
+                    assetItem.InfoText += m_Texture.IsCubemap() ? "\nShown: each cubemap as a cross" : "\nShown: every slice, in order";
+                }
+                switch (settings.m_FilterMode)
                 {
                     case 0: assetItem.InfoText += "\nFilter Mode: Point "; break;
                     case 1: assetItem.InfoText += "\nFilter Mode: Bilinear "; break;
                     case 2: assetItem.InfoText += "\nFilter Mode: Trilinear "; break;
                 }
-                assetItem.InfoText += $"\nAnisotropic level: {m_Texture2D.m_TextureSettings.m_Aniso}\nMip map bias: {m_Texture2D.m_TextureSettings.m_MipBias}";
-                switch (m_Texture2D.m_TextureSettings.m_WrapMode)
+                assetItem.InfoText += $"\nAnisotropic level: {settings.m_Aniso}\nMip map bias: {settings.m_MipBias}";
+                switch (settings.m_WrapMode)
                 {
                     case 0: assetItem.InfoText += "\nWrap mode: Repeat"; break;
                     case 1: assetItem.InfoText += "\nWrap mode: Clamp"; break;
@@ -1041,6 +1073,31 @@ namespace AssetStudio.GUI
             else
             {
                 StatusStripUpdate("Unsupported image for preview");
+            }
+        }
+
+        private static string FormatName(GraphicsFormat graphicsFormat, TextureFormat textureFormat)
+        {
+            return graphicsFormat != GraphicsFormat.None ? graphicsFormat.ToString() : textureFormat.ToString();
+        }
+
+        private void PreviewTerrainData(AssetItem assetItem, Object terrainData)
+        {
+            var type = terrainData.ToType();
+            if (!TerrainDataConverter.TryGetHeightmap(type, out var heights, out var width, out var height))
+            {
+                PreviewText(terrainData.Dump() ?? "Unable to read this TerrainData");
+                return;
+            }
+            using (var image = TerrainDataConverter.ToPreviewImage(heights, width, height))
+            {
+                var bitmap = new DirectBitmap(image.ConvertToBytes(), width, height);
+                assetItem.InfoText = $"Heightmap: {width} x {height}";
+                if (((System.Collections.Specialized.OrderedDictionary)type["m_Heightmap"])["m_Scale"] is System.Collections.Specialized.OrderedDictionary scale)
+                {
+                    assetItem.InfoText += $"\nSample spacing: {scale["x"]} x {scale["z"]}\nHeight scale: {scale["y"]}";
+                }
+                PreviewTexture(bitmap);
             }
         }
 
