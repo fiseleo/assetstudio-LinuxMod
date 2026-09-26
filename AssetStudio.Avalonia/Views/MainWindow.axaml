@@ -48,6 +48,11 @@
         <MenuItem x:Name="enableResolveDependencies" Header="Enable resolve dependencies" ToggleType="CheckBox" Click="ResolveDependencies_Click" />
         <MenuItem x:Name="allowDuplicates" Header="Allow duplicates" ToggleType="CheckBox" Click="AllowDuplicates_Click" />
         <MenuItem x:Name="skipContainer" Header="Skip container recovery" ToggleType="CheckBox" Click="SkipContainer_Click" />
+        <MenuItem Header="Theme">
+          <MenuItem x:Name="themeSystem" Header="Follow system" ToggleType="Radio" GroupName="theme" Tag="0" Click="Theme_Click" />
+          <MenuItem x:Name="themeLight" Header="Light" ToggleType="Radio" GroupName="theme" Tag="1" Click="Theme_Click" />
+          <MenuItem x:Name="themeDark" Header="Dark" ToggleType="Radio" GroupName="theme" Tag="2" Click="Theme_Click" />
+        </MenuItem>
         <Separator />
         <MenuItem Header="Specify UnityCN key..." Click="UnityCNKeys_Click" />
         <MenuItem Header="Load assembly folder (MonoBehaviour)..." Click="LoadAssemblyFolder_Click" />

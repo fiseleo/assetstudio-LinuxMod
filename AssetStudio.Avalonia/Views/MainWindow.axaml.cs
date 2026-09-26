@@ -94,6 +94,7 @@ namespace AssetStudio.Avalonia.Views
         private void InitializeExportOptions()
         {
             var s = Settings.Default;
+            ApplyTheme(s.theme);
             enableConsole.IsChecked = s.enableConsole;
             enableFileLogging.IsChecked = s.enableFileLogging;
             displayAll.IsChecked = s.displayAll;
@@ -977,6 +978,32 @@ namespace AssetStudio.Avalonia.Views
             logger.WriteToConsole = enableConsole.IsChecked;
         }
 
+        private void Theme_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem { Tag: string tag } && int.TryParse(tag, out var theme))
+            {
+                Settings.Default.theme = theme;
+                Settings.Default.Save();
+                ApplyTheme(theme);
+            }
+        }
+
+        private void ApplyTheme(int theme)
+        {
+            if (Application.Current != null)
+            {
+                Application.Current.RequestedThemeVariant = theme switch
+                {
+                    1 => global::Avalonia.Styling.ThemeVariant.Light,
+                    2 => global::Avalonia.Styling.ThemeVariant.Dark,
+                    _ => global::Avalonia.Styling.ThemeVariant.Default,
+                };
+            }
+            themeSystem.IsChecked = theme != 1 && theme != 2;
+            themeLight.IsChecked = theme == 1;
+            themeDark.IsChecked = theme == 2;
+        }
+
         private void EnableFileLogging_Click(object sender, RoutedEventArgs e)
         {
             Settings.Default.enableFileLogging = enableFileLogging.IsChecked;
@@ -1212,10 +1239,12 @@ namespace AssetStudio.Avalonia.Views
             }
             if (!string.IsNullOrEmpty(listSearch.Text))
             {
+                // large lists: compiled regex, matched in parallel (keeps the order)
+                var large = result.Count > 20000;
                 Regex regex;
                 try
                 {
-                    regex = new Regex(listSearch.Text, RegexOptions.IgnoreCase);
+                    regex = new Regex(listSearch.Text, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | (large ? RegexOptions.Compiled : RegexOptions.None));
                 }
                 catch (Exception ex)
                 {
@@ -1223,7 +1252,8 @@ namespace AssetStudio.Avalonia.Views
                     listSearch.Text = "";
                     return;
                 }
-                result = result.FindAll(x => regex.IsMatch(x.Text) || regex.IsMatch(x.Container) || regex.IsMatch(x.TypeString) || regex.IsMatch(x.m_PathID.ToString()));
+                bool Matches(AssetItem x) => regex.IsMatch(x.Text) || regex.IsMatch(x.Container) || regex.IsMatch(x.TypeString) || regex.IsMatch(x.m_PathID.ToString(CultureInfo.InvariantCulture));
+                result = large ? result.AsParallel().AsOrdered().Where(Matches).ToList() : result.FindAll(Matches);
             }
             visibleAssets = result;
             ApplySort();

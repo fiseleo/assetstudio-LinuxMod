@@ -63,6 +63,7 @@ namespace AssetStudio.Avalonia
         public int selectedUnityCNKey = 0;
         public string selectedCABMapName = "";
         public bool enableFileLogging = false;
+        public int theme = 0; //0 = follow the system, 1 = light, 2 = dark
         public string uvs = "{\"UV0\":{\"Item1\":true,\"Item2\":0},\"UV1\":{\"Item1\":true,\"Item2\":1},\"UV2\":{\"Item1\":false,\"Item2\":0},\"UV3\":{\"Item1\":false,\"Item2\":0},\"UV4\":{\"Item1\":false,\"Item2\":0},\"UV5\":{\"Item1\":false,\"Item2\":0},\"UV6\":{\"Item1\":false,\"Item2\":0},\"UV7\":{\"Item1\":false,\"Item2\":0}}";
         public bool allowDuplicates = false;
         public int loggerEventType = 30;
