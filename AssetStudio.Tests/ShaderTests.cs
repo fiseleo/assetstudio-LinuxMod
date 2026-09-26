@@ -6,6 +6,38 @@ using Vec4 = System.Numerics.Vector4;
 
 namespace AssetStudio.Tests
 {
+    public class VulkanProgramTests
+    {
+        //a Vulkan program of Unity 2021.3 (Legacy Shaders/Diffuse, DIRECTIONAL): SMOL-V encoding version 1
+        [Fact]
+        public void SmolvVersion1_DecodesToValidModules()
+        {
+            var code = File.ReadAllBytes(TestUtil.Fixture("vulkan_program_2021.3.bin"));
+            var stages = SpirVShaderConverter.DecodeStages(code);
+            Assert.NotNull(stages[0]);
+            Assert.NotNull(stages[1]);
+            Assert.All(stages.Skip(2), Assert.Null);
+            foreach (var spirv in stages.Take(2))
+            {
+                Assert.Equal(0x07230203u, BitConverter.ToUInt32(spirv, 0));
+                Assert.Equal(0u, BitConverter.ToUInt32(spirv, 4) >> 24); //the SMOL-V version is not SPIR-V's
+            }
+            var vertex = SpirvReflection.Read(stages[0]);
+            Assert.Contains(vertex.Resources, x => x.Kind == SpirvReflection.ResourceKind.UniformBuffer && x.Set == 1 && x.Binding == 1);
+            Assert.Contains(0, vertex.InputLocations);
+        }
+
+        [Fact]
+        public void Disassembly_PrintsTheLiteralsOfDecorations()
+        {
+            var code = File.ReadAllBytes(TestUtil.Fixture("vulkan_program_2021.3.bin"));
+            var text = SpirVShaderConverter.Convert(code);
+            Assert.Contains("DescriptorSet 1", text);
+            Assert.Contains("Offset 64", text);
+            Assert.DoesNotContain("Unable to decode", text);
+        }
+    }
+
     public class ShadowMatrixTests
     {
         private static Vec4 Apply(float[] m, Vec3 p) => new Vec4(

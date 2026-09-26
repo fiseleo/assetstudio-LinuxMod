@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 
@@ -102,7 +102,13 @@ namespace Smolv
 			}
 		}
 
-		public static bool Decode(Stream inputStream, int inputSize, Stream outputStream)
+		public static bool Decode(Stream inputStream, int inputSize, Stream outputStream) => Decode(inputStream, inputSize, outputStream, false);
+
+		/// <summary>
+		/// Decodes SMOL-V (encoding versions 0 and 1, as smol-v does); <paramref name="beforeZeroVersion"/> reads the
+		/// 2016-08-31 encoding instead, which has the same header as version 0.
+		/// </summary>
+		public static bool Decode(Stream inputStream, int inputSize, Stream outputStream, bool beforeZeroVersion)
 		{
 			if (inputStream == null)
 			{
@@ -124,11 +130,14 @@ namespace Smolv
 					long inputEndPosition = input.BaseStream.Position + inputSize;
 					long outputStartPosition = output.BaseStream.Position;
 
-					// Header
+					// Header: the SPIR-V version with the SMOL-V encoding version in the top byte
 					output.Write(SpirVHeaderMagic);
 					input.BaseStream.Position += sizeof(uint);
 					uint version = input.ReadUInt32();
-					output.Write(version);
+					int smolVersion = (int)(version >> 24);
+					output.Write(version & 0x00FFFFFF);
+					beforeZeroVersion &= smolVersion == 0;
+					int opsCount = KnownOpsCount(smolVersion);
 					uint generator = input.ReadUInt32();
 					output.Write(generator);
 					int bound = input.ReadInt32();
@@ -157,7 +166,7 @@ namespace Smolv
 
 						uint ioffs = 1;
 						// read type as varint, if we have it
-						if (op.OpHasType())
+						if (op.OpHasType(opsCount))
 						{
 							if (!ReadVarint(input, out uint value))
 							{
@@ -169,7 +178,7 @@ namespace Smolv
 						}
 
 						// read result as delta+varint, if we have it
-						if (op.OpHasResult())
+						if (op.OpHasResult(opsCount))
 						{
 							if (!ReadVarint(input, out uint value))
 							{
@@ -190,20 +199,90 @@ namespace Smolv
 								return false;
 							}
 
-							int zds = prevDecorate + unchecked((int)value);
+							// "before zero" version did not use zig encoding for the value
+							int zds = prevDecorate + (beforeZeroVersion ? unchecked((int)value) : ZigDecode(value));
 							output.Write(zds);
 							prevDecorate = zds;
 							ioffs++;
 						}
 
-						// Read this many IDs, that are relative to result ID
-						int relativeCount = op.OpDeltaFromResult();
-						bool inverted = false;
-						if (relativeCount < 0)
+						// MemberDecorate special decoding: the decorations of the members of a struct together
+						if (op == SpvOp.MemberDecorate && !beforeZeroVersion)
 						{
-							inverted = true;
-							relativeCount = -relativeCount;
+							if (input.BaseStream.Position >= inputEndPosition)
+							{
+								return false;
+							}
+							int count = input.ReadByte();
+							uint prevIndex = 0;
+							uint prevOffset = 0;
+							for (int m = 0; m < count; ++m)
+							{
+								if (!ReadVarint(input, out uint memberIndex))
+								{
+									return false;
+								}
+								memberIndex += prevIndex;
+								prevIndex = memberIndex;
+
+								// decoration (and length if not common/known)
+								if (!ReadVarint(input, out uint memberDec))
+								{
+									return false;
+								}
+								int knownExtraOps = DecorationExtraOps((int)memberDec);
+								uint memberLen;
+								if (knownExtraOps == -1)
+								{
+									if (!ReadVarint(input, out memberLen))
+									{
+										return false;
+									}
+									memberLen += 4;
+								}
+								else
+								{
+									memberLen = 4 + (uint)knownExtraOps;
+								}
+
+								// SPIR-V op+length (the first member's was written above)
+								if (m != 0)
+								{
+									output.Write((memberLen << 16) | (uint)op);
+									output.Write(prevDecorate);
+								}
+								output.Write(memberIndex);
+								output.Write(memberDec);
+								if (memberDec == 35) // Offset
+								{
+									if (memberLen != 5 || !ReadVarint(input, out uint offset))
+									{
+										return false;
+									}
+									offset += prevOffset;
+									output.Write(offset);
+									prevOffset = offset;
+								}
+								else
+								{
+									for (uint i = 4; i < memberLen; ++i)
+									{
+										if (!ReadVarint(input, out uint value))
+										{
+											return false;
+										}
+										output.Write(value);
+									}
+								}
+							}
+							continue;
 						}
+
+						// Read this many IDs, that are relative to result ID; the "before zero" version only used zig
+						// encoding for the IDs of a few ops
+						int relativeCount = op.OpDeltaFromResult(opsCount);
+						bool zigDecode = !beforeZeroVersion || op == SpvOp.ControlBarrier || op == SpvOp.MemoryBarrier || op == SpvOp.LoopMerge
+							|| op == SpvOp.SelectionMerge || op == SpvOp.Branch || op == SpvOp.BranchConditional || op == SpvOp.MemoryNamedBarrier;
 						for (int i = 0; i < relativeCount && ioffs < instrLen; ++i, ++ioffs)
 						{
 							if (!ReadVarint(input, out uint value))
@@ -211,7 +290,7 @@ namespace Smolv
 								return false;
 							}
 
-							int zd = inverted ? ZigDecode(value) : unchecked((int)value);
+							int zd = zigDecode ? ZigDecode(value) : unchecked((int)value);
 							output.Write(prevResult - zd);
 						}
 
@@ -223,7 +302,7 @@ namespace Smolv
 							if (instrLen > 7) output.Write((swizzle >> 2) & 3);
 							if (instrLen > 8) output.Write(swizzle & 3);
 						}
-						else if (op.OpVarRest())
+						else if (op.OpVarRest(opsCount))
 						{
 							// read rest of words with variable encoding
 							for (; ioffs < instrLen; ++ioffs)
@@ -288,10 +367,11 @@ namespace Smolv
 				return false;
 			}
 
+			//SPIR-V 1.0 through 1.6, SMOL-V encoding versions 0 and 1 (in the top byte)
 			uint headerVersion = BitConverter.ToUInt32(data, 1 * sizeof(uint));
-			if (headerVersion < 0x00010000 || headerVersion > 0x00010300)
+			uint spirvVersion = headerVersion & 0x00FFFFFF;
+			if (spirvVersion < 0x00010000 || spirvVersion > 0x00010600 || KnownOpsCount((int)(headerVersion >> 24)) == 0)
 			{
-				// only support 1.0 through 1.3
 				return false;
 			}
 
@@ -462,6 +542,14 @@ namespace Smolv
 			// unknown, encode length
 			return -1;
 		}
+
+		/// <summary>The ops an encoding version knows (their type, result and delta encodings); 0 for unknown versions.</summary>
+		private static int KnownOpsCount(int smolVersion) => smolVersion switch
+		{
+			0 => (int)SpvOp.ModuleProcessed + 1,
+			1 => OpData.SpirvOpData.Length, //up to GroupNonUniformQuadSwap
+			_ => 0,
+		};
 
 		private static int ZigDecode(uint u)
 		{

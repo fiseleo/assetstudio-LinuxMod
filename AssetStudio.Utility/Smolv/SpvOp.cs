@@ -1,4 +1,4 @@
-namespace Smolv
+﻿namespace Smolv
 {
 	public enum SpvOp
 	{
@@ -316,36 +316,36 @@ namespace Smolv
 
 	public static class SpvOpExtensions
 	{
-		public static bool OpHasResult(this SpvOp _this)
+		public static bool OpHasResult(this SpvOp _this, int opsCount)
 		{
-			if (_this < 0 || _this >= SpvOp.KnownOpsCount)
+			if (_this < 0 || (int)_this >= opsCount)
 			{
 				return false;
 			}
 			return OpData.SpirvOpData[(int)_this].hasResult != 0;
 		}
 
-		public static bool OpHasType(this SpvOp _this)
+		public static bool OpHasType(this SpvOp _this, int opsCount)
 		{
-			if (_this < 0 || _this >= SpvOp.KnownOpsCount)
+			if (_this < 0 || (int)_this >= opsCount)
 			{
 				return false;
 			}
 			return OpData.SpirvOpData[(int)_this].hasType != 0;
 		}
 
-		public static int OpDeltaFromResult(this SpvOp _this)
+		public static int OpDeltaFromResult(this SpvOp _this, int opsCount)
 		{
-			if (_this < 0 || _this >= SpvOp.KnownOpsCount)
+			if (_this < 0 || (int)_this >= opsCount)
 			{
 				return 0;
 			}
 			return OpData.SpirvOpData[(int)_this].deltaFromResult;
 		}
 
-		public static bool OpVarRest(this SpvOp _this)
+		public static bool OpVarRest(this SpvOp _this, int opsCount)
 		{
-			if (_this < 0 || _this >= SpvOp.KnownOpsCount)
+			if (_this < 0 || (int)_this >= opsCount)
 			{
 				return false;
 			}
