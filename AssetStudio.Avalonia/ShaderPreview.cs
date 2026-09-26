@@ -205,7 +205,7 @@ namespace AssetStudio.Avalonia
                 string reason;
                 try
                 {
-                    variant = UnityShaderVariant.Select(shader, material.m_ShaderKeywords, material, out reason);
+                    variant = UnityShaderVariant.Select(shader, material.m_ShaderKeywords, material, out reason, shadows: true);
                 }
                 catch (Exception e)
                 {
@@ -380,15 +380,24 @@ namespace AssetStudio.Avalonia
                 var position = target + toCamera * distance;
                 Vector3 Unmirror(Vector3 x) => new Vector3(-x.X, x.Y, x.Z);
 
+                ShadedShadows shadows = null;
                 foreach (var part in parts.Where(x => x.Draw != null))
                 {
                     var values = UnityShaderValues.CreateDefaults(linear);
                     values.SetCamera(Matrix4x4.Identity, Unmirror(position), Unmirror(target), Unmirror(up), width, height, fieldOfView);
-                    values.SetLightFromCamera(Unmirror(position), Unmirror(target), Unmirror(up));
+                    var light = values.SetLightFromCamera(Unmirror(position), Unmirror(target), Unmirror(up));
                     values.SetMaterial(part.Material, name => part.TextureSizes.TryGetValue(name, out var size) ? size : null, linear);
+                    if (part.Variant.ReceivesShadows)
+                    {
+                        //the main light's shadow map covers the model
+                        var (clip, lookup, texture) = UnityShaderValues.ShadowMatrices(light, Unmirror(center), radius);
+                        values.SetMainLightShadows(texture, 2048);
+                        values.TryGet("unity_MatrixVP", out var viewProjection);
+                        shadows ??= new ShadedShadows { LightViewProjection = clip, LightLookup = lookup, WorldToShadow = texture, ViewProjection = viewProjection };
+                    }
                     gpu.UpdateShadedDraw(part.Draw, values);
                 }
-                return gpu.RenderShaded(gpuMesh, parts.Where(x => x.Draw != null).Select(x => x.Draw).ToList(), width, height);
+                return gpu.RenderShaded(gpuMesh, parts.Where(x => x.Draw != null).Select(x => x.Draw).ToList(), width, height, shadows);
             }
             catch (Exception e)
             {

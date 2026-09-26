@@ -6,6 +6,40 @@ using Vec4 = System.Numerics.Vector4;
 
 namespace AssetStudio.Tests
 {
+    public class ShadowMatrixTests
+    {
+        private static Vec4 Apply(float[] m, Vec3 p) => new Vec4(
+            m[0] * p.X + m[4] * p.Y + m[8] * p.Z + m[12],
+            m[1] * p.X + m[5] * p.Y + m[9] * p.Z + m[13],
+            m[2] * p.X + m[6] * p.Y + m[10] * p.Z + m[14],
+            m[3] * p.X + m[7] * p.Y + m[11] * p.Z + m[15]);
+
+        [Fact]
+        public void ShadowMap_CoversTheSphereWithTheDepthReversed()
+        {
+            var light = Vec3.Normalize(new Vec3(-0.4f, 0.8f, -0.45f));
+            var center = new Vec3(1, 2, 3);
+            var (clip, lookup, texture) = UnityShaderValues.ShadowMatrices(light, center, 2);
+            var c = Apply(clip, center);
+            Assert.Equal(0, c.X, 4);
+            Assert.Equal(0, c.Y, 4);
+            Assert.Equal(0.5f, c.Z, 4);
+            Assert.Equal(1, c.W, 4);
+            //toward the light: nearer, greater depth, within 0..1
+            var near = Apply(clip, center + light * 2);
+            var far = Apply(clip, center - light * 2);
+            Assert.True(near.Z > c.Z && near.Z < 1 && far.Z > 0 && far.Z < c.Z);
+            //across: the sphere within -1..1
+            var side = Apply(clip, center + Vec3.Normalize(Vec3.Cross(Vec3.UnitY, light)) * 2);
+            Assert.InRange(MathF.Abs(side.X), 0.9f, 1f);
+            //the lookups nearer the light, the texture space in 0..1
+            Assert.True(Apply(lookup, center).Z > c.Z);
+            var t = Apply(texture, center + Vec3.Normalize(Vec3.Cross(Vec3.UnitY, light)) * 2);
+            Assert.InRange(t.X, -0.01f, 1.01f);
+            Assert.Equal(0.5f, Apply(texture, center).Y, 4);
+        }
+    }
+
     public class ColorSpaceTests
     {
         private static UnityShaderVariant Variant(string shader, string lightMode, params float[] constants)
@@ -83,6 +117,23 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD0, float4 vertexC
             Assert.True(buffers.Single(x => x.Register == 2).Size >= 80);
             Assert.Equal(new[] { 0, 1, 2, 3 }, reflection.InputLocations.OrderBy(x => x).ToArray());
             Assert.All(reflection.Resources, x => Assert.Equal(0u, x.Set));
+        }
+
+        [SkippableFact]
+        public void ComparisonSamplers_AreFoundInTheDeclarations()
+        {
+            Skip.IfNot(Hlsl.Available, "vkd3d-shader not available");
+            var dxbc = Hlsl.ToDxbc(@"
+Texture2D albedo : register(t0);
+SamplerState albedoSampler : register(s0);
+Texture2D shadowMap : register(t2);
+SamplerComparisonState shadowSampler : register(s3);
+float4 main(float4 position : SV_POSITION, float3 uv : TEXCOORD0) : SV_TARGET
+{
+    return albedo.Sample(albedoSampler, uv.xy) * shadowMap.SampleCmpLevelZero(shadowSampler, uv.xy, uv.z);
+}", "ps_4_0");
+            Assert.Equal(new[] { 3 }, DxbcSignature.ComparisonSamplers(dxbc).ToArray());
+            Assert.Empty(DxbcSignature.ComparisonSamplers(Hlsl.ToDxbc(FragmentHlsl, "ps_4_0")));
         }
 
         [SkippableFact]

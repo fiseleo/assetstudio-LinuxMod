@@ -51,6 +51,8 @@ namespace AssetStudio.Avalonia
         internal List<(VkBuffer buffer, DeviceMemory memory, IntPtr mapped, UnityConstantBuffer constants, int size)> Uniforms = new();
         internal List<(VkImage image, DeviceMemory memory, ImageView view)> Images = new();
         internal List<(uint First, uint Count)> Ranges = new();
+        //the descriptors of Unity's screen space shadows (_ShadowMapTexture), pointed at each frame's collection
+        internal List<(int Set, uint Binding, DescriptorType Type)> ScreenShadowBindings = new();
         internal VulkanMeshRenderer Owner;
         public UnityShaderVariant Variant { get; internal set; }
         public bool Transparent { get; internal set; }
@@ -202,6 +204,7 @@ namespace AssetStudio.Avalonia
             var (vertexSpirv, fragmentSpirv) = ShadedSpirv.Get(variant);
             var reflections = new[] { SpirvReflection.Read(vertexSpirv), SpirvReflection.Read(fragmentSpirv) };
             var stages = new[] { variant.Vertex, variant.Fragment };
+            var comparisonSamplers = stages.Select(x => DxbcSignature.ComparisonSamplers(x.Dxbc)).ToArray();
             var draw = new ShadedDraw { Owner = this, Variant = variant, Transparent = variant.State.Blend, Linear = linear };
             draw.Ranges.AddRange(ranges.Where(x => x.Count > 0).Select(x => ((uint)x.First, (uint)x.Count)));
             ShaderModule vertexModule = default, fragmentModule = default;
@@ -287,7 +290,7 @@ namespace AssetStudio.Avalonia
                                 }
                             case SpirvReflection.ResourceKind.Sampler:
                                 {
-                                    var imageInfo = new DescriptorImageInfo { Sampler = sampler };
+                                    var imageInfo = new DescriptorImageInfo { Sampler = SamplerOf(stages[s], comparisonSamplers[s], resource.Register) };
                                     write.PImageInfo = &imageInfo;
                                     vk.UpdateDescriptorSets(device, 1, in write, 0, null);
                                     break;
@@ -296,8 +299,25 @@ namespace AssetStudio.Avalonia
                                 {
                                     var parameter = stages[s].Textures.FirstOrDefault(x => x.Register == resource.Register)
                                         ?? new UnityShaderTexture { Name = "", Register = resource.Register, Dimension = 2 };
-                                    var view = TextureView(draw, resource, parameter, texture, defaultTexture);
-                                    var imageInfo = new DescriptorImageInfo { Sampler = sampler, ImageView = view, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
+                                    ImageView view;
+                                    if (parameter.Name == "_ShadowMapTexture")
+                                    {
+                                        //Unity's screen space shadows: lit until a frame collects them
+                                        EnsureShadowResources();
+                                        view = whiteView;
+                                        draw.ScreenShadowBindings.Add((s, resource.Binding, DescriptorTypeOf(resource.Kind)));
+                                    }
+                                    else if (parameter.Name == "_MainLightShadowmapTexture")
+                                    {
+                                        //URP's shadow map
+                                        EnsureShadowResources();
+                                        view = shadowView;
+                                    }
+                                    else
+                                    {
+                                        view = TextureView(draw, resource, parameter, texture, defaultTexture);
+                                    }
+                                    var imageInfo = new DescriptorImageInfo { Sampler = SamplerOf(stages[s], comparisonSamplers[s], parameter.SamplerRegister), ImageView = view, ImageLayout = ImageLayout.ShaderReadOnlyOptimal };
                                     write.PImageInfo = &imageInfo;
                                     vk.UpdateDescriptorSets(device, 1, in write, 0, null);
                                     break;
@@ -321,6 +341,22 @@ namespace AssetStudio.Avalonia
                 if (fragmentModule.Handle != 0) vk.DestroyShaderModule(device, fragmentModule, null);
             }
             return draw;
+        }
+
+        /// <summary>The sampler of a sampler register: comparison ones for shadow maps, clamped for the screen space shadows.</summary>
+        private Sampler SamplerOf(UnityShaderStage stage, HashSet<int> comparison, int register)
+        {
+            if (comparison.Contains(register))
+            {
+                EnsureShadowResources();
+                return compareSampler;
+            }
+            if (stage.Textures.Any(x => x.SamplerRegister == register && x.Name == "_ShadowMapTexture"))
+            {
+                EnsureShadowResources();
+                return clampSampler;
+            }
+            return sampler;
         }
 
         private static DescriptorType DescriptorTypeOf(SpirvReflection.ResourceKind kind) => kind switch
@@ -753,14 +789,21 @@ namespace AssetStudio.Avalonia
         }
 
         /// <summary>Renders the draws of a mesh (opaque ones first) and returns tightly packed BGRA pixels.</summary>
-        public byte[] RenderShaded(ShadedMesh mesh, IReadOnlyList<ShadedDraw> draws, int width, int height)
+        public byte[] RenderShaded(ShadedMesh mesh, IReadOnlyList<ShadedDraw> draws, int width, int height, ShadedShadows shadows = null)
         {
             //the draws of a linear project write linear colors: the sRGB views of the target encode them
             var linear = draws.Count > 0 && draws.All(x => x.Linear);
             EnsureTarget(width, height);
+            shadows = shadowPipeline.Handle != 0 ? shadows : null;
+            var screenShadows = shadows != null && draws.Any(x => x.ScreenShadowBindings.Count > 0);
+            if (screenShadows)
+                EnsureCollectTarget(width, height);
+            BindScreenShadows(draws, screenShadows);
             Check(vk.ResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
             var beginInfo = new CommandBufferBeginInfo { SType = StructureType.CommandBufferBeginInfo, Flags = CommandBufferUsageFlags.OneTimeSubmitBit };
             Check(vk.BeginCommandBuffer(commandBuffer, in beginInfo), "vkBeginCommandBuffer");
+            if (shadows != null)
+                RecordShadows(mesh, draws, shadows, width, height);
 
             var clearValues = stackalloc ClearValue[3];
             clearValues[0] = linear ? new ClearValue(new ClearColorValue(0.0331f, 0.0331f, 0.0477f, 1f)) : new ClearValue(new ClearColorValue(0.2f, 0.2f, 0.24f, 1f));
@@ -873,6 +916,7 @@ namespace AssetStudio.Avalonia
 
         private void DestroyShadedResources()
         {
+            DestroyShadowResources();
             DestroyBuffer(ref zeroBuffer, ref zeroMemory);
             foreach (var key in dummyImages.Keys.ToList())
             {

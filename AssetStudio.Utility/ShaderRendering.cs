@@ -87,8 +87,14 @@ namespace AssetStudio
         //the keywords of the light the preview sets up
         private static bool IsWantedKeyword(string keyword) => keyword == "DIRECTIONAL" || keyword == "LIGHTPROBE_SH";
 
+        /// <summary>The shadows of the main light the preview can give: Unity's screen space shadows, URP's shadow map (one cascade).</summary>
+        public static bool IsShadowKeyword(string keyword) => keyword == "SHADOWS_SCREEN" || keyword == "_MAIN_LIGHT_SHADOWS";
+
+        /// <summary>Whether the variant receives the main light's shadows (see <see cref="IsShadowKeyword"/>).</summary>
+        public bool ReceivesShadows => Keywords?.Any(IsShadowKeyword) == true;
+
         /// <summary>The variant for a material; null with the reason when there is none the preview can draw.</summary>
-        public static UnityShaderVariant Select(Shader shader, IReadOnlyCollection<string> materialKeywords, Material material, out string reason)
+        public static UnityShaderVariant Select(Shader shader, IReadOnlyCollection<string> materialKeywords, Material material, out string reason, bool shadows = false)
         {
             reason = null;
             var form = shader?.m_ParsedForm;
@@ -124,7 +130,7 @@ namespace AssetStudio
                         {
                             if (keywords.Contains(keyword))
                                 score += 10;
-                            else if (IsWantedKeyword(keyword))
+                            else if (IsWantedKeyword(keyword) || shadows && IsShadowKeyword(keyword))
                                 score += 1;
                             else if (IsUnwantedKeyword(keyword))
                                 score -= 20;
@@ -361,6 +367,37 @@ namespace AssetStudio
                     var name = Encoding.ASCII.GetString(dxbc, data + nameOffset, end - data - nameOffset);
                     result.Add(new Element(name, BitConverter.ToInt32(dxbc, e + 4), BitConverter.ToInt32(dxbc, e + 16), BitConverter.ToInt32(dxbc, e + 8),
                         BitConverter.ToInt32(dxbc, e + 12), dxbc[e + 20]));
+                }
+                break;
+            }
+            return result;
+        }
+
+        /// <summary>The registers of the comparison samplers (dcl_sampler s#, mode_comparison) of a shader model 4/5 program.</summary>
+        public static HashSet<int> ComparisonSamplers(byte[] dxbc)
+        {
+            var result = new HashSet<int>();
+            if (dxbc == null || dxbc.Length < 32)
+                return result;
+            var chunkCount = BitConverter.ToInt32(dxbc, 28);
+            for (int c = 0; c < chunkCount; c++)
+            {
+                var offset = BitConverter.ToInt32(dxbc, 32 + c * 4);
+                var fourCC = Encoding.ASCII.GetString(dxbc, offset, 4);
+                if (fourCC != "SHDR" && fourCC != "SHEX")
+                    continue;
+                var start = offset + 8;
+                var end = Math.Min(dxbc.Length, start + BitConverter.ToInt32(dxbc, start + 4) * 4);
+                for (int i = start + 8; i + 4 <= end;)
+                {
+                    var token = BitConverter.ToUInt32(dxbc, i);
+                    var opcode = token & 0x7FF;
+                    var length = opcode == 0x35 ? BitConverter.ToInt32(dxbc, i + 4) : (int)((token >> 24) & 0x7F); //customdata: its own length
+                    if (length <= 0)
+                        break;
+                    if (opcode == 0x5A && ((token >> 11) & 0xF) == 1 && i + 12 <= end) //dcl_sampler, mode_comparison
+                        result.Add(BitConverter.ToInt32(dxbc, i + 8));
+                    i += length * 4;
                 }
                 break;
             }
@@ -734,8 +771,8 @@ namespace AssetStudio
             return v;
         }
 
-        /// <summary>The main directional light, coming from the upper left of the camera (a light that follows the view).</summary>
-        public void SetLightFromCamera(Vec3 position, Vec3 target, Vec3 upHint)
+        /// <summary>The main directional light, coming from the upper left of the camera (a light that follows the view); its direction (toward the light).</summary>
+        public Vec3 SetLightFromCamera(Vec3 position, Vec3 target, Vec3 upHint)
         {
             var forward = Vec3.Normalize(target - position);
             var right = Vec3.Normalize(Vec3.Cross(upHint, forward));
@@ -745,6 +782,45 @@ namespace AssetStudio
             var light = Vec3.Normalize(-forward * 0.7f + up * 0.6f - right * 0.4f);
             Set("_WorldSpaceLightPos0", light.X, light.Y, light.Z, 0);
             Set("_MainLightPosition", light.X, light.Y, light.Z, 0);
+            return light;
+        }
+
+        /// <summary>
+        /// The shadow map of a directional light covering a sphere: an orthographic view from the light, depth reversed
+        /// (1 nearest the light). Column-major like the matrices of the constant buffers. <paramref name="bias"/> moves the
+        /// lookups toward the light; the texture matrix maps x, y to 0..1 (URP's _MainLightWorldToShadow).
+        /// </summary>
+        public static (float[] clip, float[] lookup, float[] texture) ShadowMatrices(Vec3 light, Vec3 center, float radius, float bias = 0.002f)
+        {
+            light = Vec3.Normalize(light);
+            var upHint = MathF.Abs(light.Y) > 0.99f ? Vec3.UnitZ : Vec3.UnitY;
+            var right = Vec3.Normalize(Vec3.Cross(upHint, light));
+            var up = Vec3.Cross(light, right);
+            radius = Math.Max(radius, 1e-4f) * 1.05f;
+            var depthRange = radius * 2.2f;
+            //rows of the matrix: x, y in -1..1 across the sphere, z = 0.5 + distance toward the light / depth range
+            float[] Matrix(Vec3 x, float x0, Vec3 y, float y0, Vec3 z, float z0) => new[]
+            {
+                x.X, y.X, z.X, 0,
+                x.Y, y.Y, z.Y, 0,
+                x.Z, y.Z, z.Z, 0,
+                x0, y0, z0, 1,
+            };
+            Vec3 rx = right / radius, ry = up / radius, rz = light / depthRange;
+            float cx = -Vec3.Dot(center, rx), cy = -Vec3.Dot(center, ry), cz = 0.5f - Vec3.Dot(center, rz);
+            return (Matrix(rx, cx, ry, cy, rz, cz), Matrix(rx, cx, ry, cy, rz, cz + bias),
+                Matrix(rx * 0.5f, cx * 0.5f + 0.5f, ry * 0.5f, cy * 0.5f + 0.5f, rz, cz + bias));
+        }
+
+        /// <summary>URP's main light shadows: one cascade, full strength, no fade.</summary>
+        public void SetMainLightShadows(float[] worldToShadow, int size)
+        {
+            Set("_MainLightWorldToShadow", Enumerable.Range(0, 5).SelectMany(_ => worldToShadow).ToArray());
+            Set("_MainLightShadowParams", 1, 0, 0, 0);
+            Set("_MainLightShadowData", 1, 0, 0, 0);
+            Set("_MainLightShadowmapSize", 1f / size, 1f / size, size, size);
+            Set("_MainLightShadowCascadeCount", 1, 0, 0, 0);
+            Set("_CascadeShadowSplitSphereRadii", 1e8f, 1e8f, 1e8f, 1e8f);
         }
 
         /// <summary>Camera and object matrices (Unity world space): a perspective camera at a position looking at a target.</summary>
