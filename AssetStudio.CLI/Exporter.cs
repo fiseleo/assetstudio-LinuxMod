@@ -568,12 +568,39 @@ namespace AssetStudio.CLI
                 case ClassIDType.Material:
                     return ExportJSONFile(item, exportPath);
                 default:
-                    return ExportRawFile(item, exportPath);
+                    return ExportTypeTreeOrRawFile(item, exportPath);
             }
+        }
+
+        // The classes without a converter: their fields from the type tree (of the file, or the type tree database) as JSON
+        private static bool ExportTypeTreeOrRawFile(AssetItem item, string exportPath)
+        {
+            var type = item.Asset is MonoBehaviour ? null : item.Asset.ToType();
+            if (type == null)
+            {
+                return ExportRawFile(item, exportPath);
+            }
+            return ExportTypeTreeJSON(item, type, exportPath);
+        }
+
+        private static bool ExportTypeTreeJSON(AssetItem item, System.Collections.Specialized.OrderedDictionary type, string exportPath)
+        {
+            if (!TryExportFile(exportPath, item, ".json", out var exportFullPath))
+                return false;
+            File.WriteAllText(exportFullPath, JsonConvert.SerializeObject(type, Formatting.Indented));
+            return true;
         }
 
         public static bool ExportJSONFile(AssetItem item, string exportPath)
         {
+            if (item.Asset.GetType() == typeof(Object)) //a class without its own reader: its type tree has the content
+            {
+                var type = item.Asset.ToType();
+                if (type != null)
+                {
+                    return ExportTypeTreeJSON(item, type, exportPath);
+                }
+            }
             if (!TryExportFile(exportPath, item, ".json", out var exportFullPath))
                 return false;
 

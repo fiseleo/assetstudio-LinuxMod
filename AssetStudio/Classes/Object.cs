@@ -47,13 +47,26 @@ namespace AssetStudio
             }
         }
 
+        /// <summary>
+        /// The type tree of the object: from its file, else from the type tree database (files built without type trees).
+        /// </summary>
+        public TypeTree GetTypeTree()
+        {
+            if (serializedType?.m_Type?.m_Nodes?.Count > 0)
+            {
+                return serializedType.m_Type;
+            }
+            return TypeTreeDatabase.GetTypeTree((int)type, version, assetsFile?.buildType);
+        }
+
         public string Dump()
         {
-            if (serializedType?.m_Type != null)
+            var m_Type = GetTypeTree();
+            if (m_Type != null)
             {
                 lock (reader.BaseStream)  // readers of one file share the stream
                 {
-                    return TypeTreeHelper.ReadTypeString(serializedType.m_Type, reader);
+                    return TypeTreeHelper.ReadTypeString(m_Type, reader);
                 }
             }
             return null;
@@ -73,11 +86,12 @@ namespace AssetStudio
 
         public OrderedDictionary ToType()
         {
-            if (serializedType?.m_Type != null)
+            var m_Type = GetTypeTree();
+            if (m_Type != null)
             {
                 lock (reader.BaseStream)  // readers of one file share the stream
                 {
-                    return TypeTreeHelper.ReadType(serializedType.m_Type, reader);
+                    return TypeTreeHelper.ReadType(m_Type, reader);
                 }
             }
             return null;
