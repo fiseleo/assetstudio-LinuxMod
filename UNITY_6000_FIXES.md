@@ -157,4 +157,9 @@ in the middle of an alpha cycle.
 | 6000.7.0a3 | Shader | `SerializedPass.m_SerializedDynamicBranchKeywordMask` |
 
 SerializedFile formats: 23 (6000.5, type tree blobs, optionally extracted to a `.typetreedata` file) and 26 (6000.7,
-shared sub trees) are read. Shader platforms newer than the known list (e.g. 28 in 6000.7) are skipped on export.
+shared sub trees) are read.
+
+Shader platform 28 is D3D12 (6000.7, `ShaderCompilerPlatform.D3D12`, compiled with dxcompiler). Its GPU program types
+are not public (34 = vertex and 37 = pixel in the UnityDataTools 6000.7 player); every program is a DXBC container
+behind a small header, holding DXIL or SM4/5 byte code, and is exported like a D3D11 program (DXIL goes through
+vkd3d-shader's DXIL front end). WebGPU (26) and Switch2 (27) programs are still skipped.

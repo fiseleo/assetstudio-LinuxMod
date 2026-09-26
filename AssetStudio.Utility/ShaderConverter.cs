@@ -832,8 +832,11 @@ namespace AssetStudio
                         || programType == ShaderGpuProgramType.GLCore43;
                 case ShaderCompilerPlatform.Vulkan:
                     return programType == ShaderGpuProgramType.SPIRV;
+                case ShaderCompilerPlatform.D3D12:
+                    // the D3D12 program types come after the known ones; the program is a DXBC container
+                    return programType > ShaderGpuProgramType.PS5NGGC;
                 default:
-                    // platforms added after this list (e.g. platform 28 in 6000.7) are skipped
+                    // WebGPU, Switch2 and platforms added later are skipped
                     return false;
             }
         }
@@ -892,6 +895,12 @@ namespace AssetStudio
                     return "ps5";
                 case ShaderCompilerPlatform.PS5NGGC:
                     return "ps5_nggc";
+                case ShaderCompilerPlatform.WebGPU:
+                    return "webgpu";
+                case ShaderCompilerPlatform.Switch2:
+                    return "switch2";
+                case ShaderCompilerPlatform.D3D12:
+                    return "d3d12";
                 default:
                     return "unknown";
             }
@@ -1129,34 +1138,7 @@ namespace AssetStudio
                                     }
                                 }
                             }
-                            var buffSpan = m_ProgramCode.AsSpan(start);
-
-                            sb.Append($"// hash: {ComputeHash64(buffSpan):x8}\n");
-                            if (!OperatingSystem.IsWindows())
-                            {
-                                AppendVulkan(sb, buffSpan, Vkd3dShader.SourceType.DxbcTpf);
-                                break;
-                            }
-                            try
-                            {
-                                HLSLDecompiler.DecompileShader(buffSpan.ToArray(), buffSpan.Length, out var hlslText);
-                                sb.Append(hlslText);
-                            }
-                            catch (Exception e)
-                            {
-                                Logger.Verbose($"Decompile error {e.Message}");
-                                Logger.Verbose($"Attempting to disassemble...");
-
-                                try
-                                {
-                                    var g = Compiler.Disassemble(buffSpan.GetPinnableReference(), buffSpan.Length, DisasmFlags.None, "");
-                                    sb.Append(g.AsString());
-                                }
-                                catch (Exception ex)
-                                {
-                                    sb.Append($"// decompile/disassembly error {ex.Message}\n");
-                                }
-                            }
+                            AppendDxbc(sb, m_ProgramCode.AsSpan(start));
                             break;
                         }
                     case ShaderGpuProgramType.MetalVS:
@@ -1195,21 +1177,87 @@ namespace AssetStudio
                         sb.Append(Encoding.UTF8.GetString(m_ProgramCode));
                         break;
                     default:
-                        sb.Append($"//hash: {ComputeHash64(m_ProgramCode):x8}\n");
-                        sb.Append($"//shader disassembly not supported on {m_ProgramType}");
-                        break;
+                        {
+                            // D3D12 programs (6000.7): a DXBC container after a header, holding DXIL or SM4/5 byte code
+                            var start = FindDxbc(m_ProgramCode);
+                            if (start >= 0)
+                            {
+                                AppendDxbc(sb, m_ProgramCode.AsSpan(start));
+                                break;
+                            }
+                            sb.Append($"//hash: {ComputeHash64(m_ProgramCode):x8}\n");
+                            sb.Append($"//shader disassembly not supported on {m_ProgramType}");
+                            break;
+                        }
                 }
             }
             sb.Append('"');
             return sb.ToString();
         }
+        private static bool IsDxbcAt(byte[] code, int offset) =>
+            offset >= 0 && offset + 4 <= code.Length && code[offset] == 'D' && code[offset + 1] == 'X' && code[offset + 2] == 'B' && code[offset + 3] == 'C';
+
+        private static int FindDxbc(byte[] code)
+        {
+            for (int i = 0; i < Math.Min(64, code.Length - 4); i++)
+            {
+                if (IsDxbcAt(code, i))
+                    return i;
+            }
+            return -1;
+        }
+
+        // A DXBC container holds DXIL (shader model 6, dxcompiler) or SM4/5 byte code
+        private static bool HasDxilPart(ReadOnlySpan<byte> container)
+        {
+            if (container.Length < 32)
+                return false;
+            var partCount = BitConverter.ToInt32(container.Slice(28, 4));
+            for (int i = 0; i < partCount && 32 + 4 * i + 4 <= container.Length; i++)
+            {
+                var offset = BitConverter.ToInt32(container.Slice(32 + 4 * i, 4));
+                if (offset >= 0 && offset + 4 <= container.Length && container.Slice(offset, 4).SequenceEqual("DXIL"u8))
+                    return true;
+            }
+            return false;
+        }
+
+        private void AppendDxbc(StringBuilder sb, Span<byte> buffSpan)
+        {
+            sb.Append($"// hash: {ComputeHash64(buffSpan):x8}\n");
+            var isDxil = HasDxilPart(buffSpan);
+            if (!OperatingSystem.IsWindows() || isDxil)
+            {
+                AppendVulkan(sb, buffSpan, isDxil ? Vkd3dShader.SourceType.DxbcDxil : Vkd3dShader.SourceType.DxbcTpf);
+                return;
+            }
+            try
+            {
+                HLSLDecompiler.DecompileShader(buffSpan.ToArray(), buffSpan.Length, out var hlslText);
+                sb.Append(hlslText);
+            }
+            catch (Exception e)
+            {
+                Logger.Verbose($"Decompile error {e.Message}");
+                Logger.Verbose($"Attempting to disassemble...");
+
+                try
+                {
+                    var g = Compiler.Disassemble(buffSpan.GetPinnableReference(), buffSpan.Length, DisasmFlags.None, "");
+                    sb.Append(g.AsString());
+                }
+                catch (Exception ex)
+                {
+                    sb.Append($"// decompile/disassembly error {ex.Message}\n");
+                }
+            }
+        }
+
         /// <summary>
         /// Direct3D programs off Windows (no d3dcompiler / HLSLDecompiler): translate to Vulkan SPIR-V with
         /// vkd3d-shader and decompile that to Vulkan GLSL with SPIRV-Cross, falling back to the SPIR-V
         /// disassembly and then to vkd3d's Direct3D assembly listing.
         /// </summary>
-        private static bool IsDxbcAt(byte[] code, int offset) =>
-            offset >= 0 && offset + 4 <= code.Length && code[offset] == 'D' && code[offset + 1] == 'X' && code[offset + 2] == 'B' && code[offset + 3] == 'C';
 
         private static void AppendVulkan(StringBuilder sb, ReadOnlySpan<byte> byteCode, Vkd3dShader.SourceType sourceType)
         {

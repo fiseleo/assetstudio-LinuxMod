@@ -20,6 +20,7 @@ namespace AssetStudio
         {
             DxbcTpf = 1,
             D3DBytecode = 3,
+            DxbcDxil = 4,
         }
 
         private enum TargetType

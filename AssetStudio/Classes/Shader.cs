@@ -1095,7 +1095,11 @@ namespace AssetStudio
         GameCoreXboxOne = 21,
         GameCoreScarlett = 22,
         PS5 = 23,
-        PS5NGGC = 24
+        PS5NGGC = 24,
+        GameCore = 25,
+        WebGPU = 26,
+        Switch2 = 27,
+        D3D12 = 28, //6000.7, compiled with dxcompiler; its program types are not public (34 vertex, 37 pixel seen)
     };
 
     public class Shader : NamedObject
