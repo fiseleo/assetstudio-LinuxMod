@@ -93,8 +93,75 @@ namespace AssetStudio
             }
         }
 
+        #region Extracted type trees
+
+        // Unity 6000.5+ builds can move the type trees of their files into .typetreedata archives (Addressables
+        // "Extract Typetrees"): a UnityFS archive with one type tree blob per entry, named by the type tree hash.
+        private readonly ConcurrentDictionary<string, byte[]> extractedTypeTrees = new ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> typeTreeDataScanned = new HashSet<string>(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, byte> missingTypeTreeReported = new ConcurrentDictionary<string, byte>();
+
+        internal byte[] GetExtractedTypeTree(string hash) => extractedTypeTrees.TryGetValue(hash, out var data) ? data : null;
+
+        internal void ReportMissingExtractedTypeTree(string fileName)
+        {
+            if (missingTypeTreeReported.TryAdd(fileName, 0))
+            {
+                Logger.Warning($"The type trees of {fileName} were extracted to a .typetreedata file, which is not loaded: load it with the file (or put it in the same folder)");
+            }
+        }
+
+        private static bool IsTypeTreeData(string path) => path.EndsWith(".typetreedata", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Loads the .typetreedata files given and those next to the files given; returns the other files.</summary>
+        private string[] LoadExtractedTypeTrees(string[] files)
+        {
+            var candidates = files.Where(IsTypeTreeData).ToList();
+            foreach (var directory in files.Select(Path.GetDirectoryName).Distinct())
+            {
+                if (!string.IsNullOrEmpty(directory) && typeTreeDataScanned.Add(directory) && Directory.Exists(directory))
+                {
+                    candidates.AddRange(Directory.GetFiles(directory, "*.typetreedata"));
+                }
+            }
+            foreach (var file in candidates)
+            {
+                if (typeTreeDataScanned.Add(Path.GetFullPath(file)))
+                {
+                    LoadTypeTreeData(file);
+                }
+            }
+            return files.Where(x => !IsTypeTreeData(x)).ToArray();
+        }
+
+        private void LoadTypeTreeData(string path)
+        {
+            try
+            {
+                using var reader = new FileReader(path);
+                var bundle = new BundleFile(reader, Game);
+                var count = 0;
+                foreach (var entry in bundle.fileList)
+                {
+                    using var data = new MemoryStream();
+                    entry.stream.Position = 0;
+                    entry.stream.CopyTo(data);
+                    extractedTypeTrees[Path.GetFileName(entry.path)] = data.ToArray();
+                    count++;
+                }
+                Logger.Info($"Loaded {count} extracted type trees from {Path.GetFileName(path)}");
+            }
+            catch (Exception e)
+            {
+                Logger.Warning($"Unable to read the type tree archive {path}: {e.Message}");
+            }
+        }
+
+        #endregion
+
         private void Load(string[] files)
         {
+            files = LoadExtractedTypeTrees(files);
             foreach (var file in files)
             {
                 Logger.Verbose($"caching {file} path and name to filter out duplicates");

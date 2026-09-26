@@ -328,7 +328,22 @@ namespace AssetStudio
                     var blobSize = reader.ReadUInt32();
                     if (blobSize == 0)
                     {
-                        extractedTypeTree = true; // stored in a separate .typetreedata file
+                        // stored in a separate .typetreedata archive, as the entry named by the type tree hash
+                        var data = type.m_TypeTreeHash == null ? null : assetsManager.GetExtractedTypeTree(Convert.ToHexString(type.m_TypeTreeHash));
+                        if (data == null)
+                        {
+                            extractedTypeTree = true;
+                            assetsManager.ReportMissingExtractedTypeTree(fileName);
+                        }
+                        else
+                        {
+                            using var blobReader = new EndianBinaryReader(new MemoryStream(data), EndianType.LittleEndian);
+                            var blob = ReadTypeTreeBlob(blobReader);
+                            if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
+                                pendingTypeTrees.Add((type.m_Type, blob));
+                            else
+                                AppendSharedTypeTree(type.m_Type.m_Nodes, blob, 0, false, null, 0);
+                        }
                     }
                     else if (header.m_Version >= SerializedFileFormatVersion.SharedTypeTrees)
                     {
@@ -470,8 +485,9 @@ namespace AssetStudio
         private const byte SubTreeReferenceFlag = 0x20;
         private readonly List<(TypeTree tree, SharedTypeTreeBlob blob)> pendingTypeTrees = new List<(TypeTree, SharedTypeTreeBlob)>();
 
-        private SharedTypeTreeBlob ReadTypeTreeBlob()
+        private SharedTypeTreeBlob ReadTypeTreeBlob(EndianBinaryReader reader = null)
         {
+            reader ??= this.reader;
             var magic = reader.ReadBytes(4);
             if (magic.Length != 4 || magic[0] != 'm' || magic[1] != 'h' || magic[2] != 't' || magic[3] != 't')
                 throw new InvalidDataException($"unexpected type tree blob magic {Convert.ToHexString(magic)}");
@@ -534,7 +550,7 @@ namespace AssetStudio
                 if ((raw.flags & SubTreeReferenceFlag) != 0)
                 {
                     // the node stands for the root of the sub tree, its children follow one level below it
-                    if (subTrees != null && raw.reference < (ulong)blob.references.Length && subTrees.TryGetValue(blob.references[raw.reference], out var subTree))
+                    if (raw.reference < (ulong)blob.references.Length && TryGetSubTree(subTrees, blob.references[raw.reference], out var subTree))
                     {
                         AppendSharedTypeTree(nodes, subTree, level, true, subTrees, depth + 1);
                     }
@@ -544,6 +560,20 @@ namespace AssetStudio
                     }
                 }
             }
+        }
+
+        // a sub tree of the file, or of an extracted type tree archive
+        private bool TryGetSubTree(Dictionary<string, SharedTypeTreeBlob> subTrees, string hash, out SharedTypeTreeBlob subTree)
+        {
+            if (subTrees != null && subTrees.TryGetValue(hash, out subTree))
+                return true;
+            subTree = null;
+            var data = assetsManager.GetExtractedTypeTree(hash);
+            if (data == null)
+                return false;
+            using var blobReader = new EndianBinaryReader(new MemoryStream(data), EndianType.LittleEndian);
+            subTree = ReadTypeTreeBlob(blobReader);
+            return true;
         }
 
         private static string ReadSharedString(byte[] strings, uint value)
