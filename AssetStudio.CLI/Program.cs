@@ -45,6 +45,7 @@ namespace AssetStudio.CLI
                 Logger.FileLogging = Settings.Default.enableFileLogging;
                 AssetsHelper.Minimal = Settings.Default.minimalAssetMap;
                 AssetsHelper.SetUnityVersion(o.UnityVersion);
+                Settings.Default.ModelFormatOverride = o.ModelFormat;
                 if (o.TypeTreeDumps != null)
                 {
                     TypeTreeDatabase.DumpsDirectory = o.TypeTreeDumps.FullName;

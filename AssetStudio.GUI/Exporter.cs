@@ -406,7 +406,7 @@ namespace AssetStudio.GUI
             var m_Animator = (Animator)item.Asset;
             var options = new ModelConverter.Options()
             {
-                imageFormat = Properties.Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat(ModelFormatSetting, Properties.Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Properties.Settings.Default.collectAnimations,
                 exportMaterials = Properties.Settings.Default.exportMaterials,
@@ -444,7 +444,7 @@ namespace AssetStudio.GUI
         {
             var options = new ModelConverter.Options()
             {
-                imageFormat = Properties.Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat(ModelFormatSetting, Properties.Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Properties.Settings.Default.collectAnimations,
                 exportMaterials = Properties.Settings.Default.exportMaterials,
@@ -481,7 +481,7 @@ namespace AssetStudio.GUI
             var rootName = Path.GetFileNameWithoutExtension(exportPath);
             var options = new ModelConverter.Options()
             {
-                imageFormat = Properties.Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat(ModelFormatSetting, Properties.Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Properties.Settings.Default.collectAnimations,
                 exportMaterials = Properties.Settings.Default.exportMaterials,
@@ -505,6 +505,14 @@ namespace AssetStudio.GUI
             ExportFbx(convert, exportPath);
         }
 
+        // the "FBX format" choice of the export options: 0 binary, 1 ascii, 2 glTF, 3 glTF binary
+        private static ModelFormat ModelFormatSetting => Properties.Settings.Default.fbxFormat switch
+        {
+            2 => ModelFormat.Gltf,
+            3 => ModelFormat.Glb,
+            _ => ModelFormat.Fbx,
+        };
+
         private static void ExportFbx(IImported convert, string exportPath)
         {
             var exportOptions = new Fbx.ExportOptions()
@@ -519,9 +527,9 @@ namespace AssetStudio.GUI
                 boneSize = (int)Properties.Settings.Default.boneSize,
                 scaleFactor = (float)Properties.Settings.Default.scaleFactor,
                 fbxVersion = Properties.Settings.Default.fbxVersion,
-                fbxFormat = Properties.Settings.Default.fbxFormat
+                fbxFormat = Properties.Settings.Default.fbxFormat > 1 ? 0 : Properties.Settings.Default.fbxFormat
             };
-            ModelExporter.ExportFbx(exportPath, convert, exportOptions);
+            ModelExporter.ExportModel(exportPath, convert, exportOptions, ModelFormatSetting);
         }
 
         public static bool ExportDumpFile(AssetItem item, string exportPath)

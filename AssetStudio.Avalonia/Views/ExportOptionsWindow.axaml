@@ -88,6 +88,14 @@
               <NumericUpDown x:Name="scaleFactor" Width="120" Minimum="0" Maximum="100" Increment="0.1" FormatString="0.00" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Model format" VerticalAlignment="Center" />
+              <ComboBox x:Name="modelFormat">
+                <ComboBoxItem>FBX</ComboBoxItem>
+                <ComboBoxItem>glTF (.gltf + .bin + images)</ComboBoxItem>
+                <ComboBoxItem>glTF binary (.glb)</ComboBoxItem>
+              </ComboBox>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="FBX format" VerticalAlignment="Center" />
               <ComboBox x:Name="fbxFormat">
                 <ComboBoxItem>Binary</ComboBoxItem>

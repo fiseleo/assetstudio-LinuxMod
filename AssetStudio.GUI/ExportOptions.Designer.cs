@@ -562,7 +562,7 @@ namespace AssetStudio.GUI
             // 
             fbxFormat.DropDownStyle = ComboBoxStyle.DropDownList;
             fbxFormat.FormattingEnabled = true;
-            fbxFormat.Items.AddRange(new object[] { "Binary", "Ascii" });
+            fbxFormat.Items.AddRange(new object[] { "Binary", "Ascii", "glTF", "GLB" });
             fbxFormat.Location = new System.Drawing.Point(271, 125);
             fbxFormat.Margin = new Padding(4);
             fbxFormat.Name = "fbxFormat";

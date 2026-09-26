@@ -864,7 +864,7 @@ namespace AssetStudio
                             var track = iAnim.FindTrack(FixBonePath(animationClip, m_EulerCurve.path));
                             foreach (var m_Curve in m_EulerCurve.curve.m_Curve)
                             {
-                                var value = Fbx.EulerToQuaternion(new Vector3(m_Curve.value.X, -m_Curve.value.Y, -m_Curve.value.Z));
+                                var value = EulerToQuaternion(new Vector3(m_Curve.value.X, -m_Curve.value.Y, -m_Curve.value.Z));
                                 track.Rotations.Add(new ImportedKeyframe<Quaternion>(m_Curve.time, value));
                             }
                         }
@@ -1043,7 +1043,7 @@ namespace AssetStudio
                         )));
                         break;
                     case 4:
-                        var value = Fbx.EulerToQuaternion(new Vector3
+                        var value = EulerToQuaternion(new Vector3
                         (
                             data[curveIndex++ + offset],
                             -data[curveIndex++ + offset],
@@ -1142,6 +1142,24 @@ namespace AssetStudio
                 }
                 parentFrame.AddChild(frame);
             }
+        }
+
+        /// <summary>
+        /// Euler angles in degrees, applied X then Y then Z (FbxAMatrix.SetR), to a quaternion; managed so model export
+        /// (glTF) doesn't need the FBX SDK.
+        /// </summary>
+        public static Quaternion EulerToQuaternion(Vector3 euler)
+        {
+            const float toHalfRadians = MathF.PI / 360f;
+            var (sx, cx) = MathF.SinCos(euler.X * toHalfRadians);
+            var (sy, cy) = MathF.SinCos(euler.Y * toHalfRadians);
+            var (sz, cz) = MathF.SinCos(euler.Z * toHalfRadians);
+            //qz * qy * qx
+            return new Quaternion(
+                sx * cy * cz - cx * sy * sz,
+                cx * sy * cz + sx * cy * sz,
+                cx * cy * sz - sx * sy * cz,
+                cx * cy * cz + sx * sy * sz);
         }
 
         private string GetPathByChannelName(string channelName)

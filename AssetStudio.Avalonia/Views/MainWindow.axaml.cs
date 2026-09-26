@@ -2650,11 +2650,12 @@ namespace AssetStudio.Avalonia.Views
 
         private async Task<bool> CheckFbx()
         {
-            if (NativeLibraries.FbxAvailable)
+            if (NativeLibraries.FbxAvailable || (ModelFormat)Settings.Default.modelFormat != ModelFormat.Fbx)
                 return true;
             await Dialogs.MessageAsync(this, "FBX export unavailable",
                 $"Model export needs the native FBX exporter library:\n{Path.Combine(NativeLibraries.NativeDirectory, NativeLibraries.FbxLibraryFileName)}\n\n" +
                 "Build AssetStudio.FBXNative for Linux against the Autodesk FBX SDK and copy it there (see LINUX.md).\n" +
+                "Or choose glTF in Options > Export options > Model format, which needs no native library.\n" +
                 "Meshes can still be exported as OBJ via Export > Selected assets.");
             return false;
         }
@@ -2739,7 +2740,8 @@ namespace AssetStudio.Avalonia.Views
             }
             if (!await CheckFbx())
                 return;
-            var path = await Dialogs.SaveFileAsync(this, "Export merged FBX", gameObjects[0].m_Name + " (merge).fbx", Settings.Default.lastSaveDirectory, new FilePickerFileType("Fbx file") { Patterns = new[] { "*.fbx" } });
+            var extension = ModelExporter.GetExtension((ModelFormat)Settings.Default.modelFormat);
+            var path = await Dialogs.SaveFileAsync(this, "Export merged model", gameObjects[0].m_Name + " (merge)" + extension, Settings.Default.lastSaveDirectory, new FilePickerFileType("Model file") { Patterns = new[] { "*" + extension } });
             if (path == null)
                 return;
             RememberSaveDirectory(Path.GetDirectoryName(path));

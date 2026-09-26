@@ -413,7 +413,7 @@ namespace AssetStudio.Avalonia
             var m_Animator = (Animator)item.Asset;
             var options = new ModelConverter.Options()
             {
-                imageFormat = Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat((ModelFormat)Settings.Default.modelFormat, Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Settings.Default.collectAnimations,
                 exportMaterials = Settings.Default.exportMaterials,
@@ -451,7 +451,7 @@ namespace AssetStudio.Avalonia
         {
             var options = new ModelConverter.Options()
             {
-                imageFormat = Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat((ModelFormat)Settings.Default.modelFormat, Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Settings.Default.collectAnimations,
                 exportMaterials = Settings.Default.exportMaterials,
@@ -488,7 +488,7 @@ namespace AssetStudio.Avalonia
             var rootName = Path.GetFileNameWithoutExtension(exportPath);
             var options = new ModelConverter.Options()
             {
-                imageFormat = Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat((ModelFormat)Settings.Default.modelFormat, Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Settings.Default.collectAnimations,
                 exportMaterials = Settings.Default.exportMaterials,
@@ -528,11 +528,12 @@ namespace AssetStudio.Avalonia
                 fbxVersion = Settings.Default.fbxVersion,
                 fbxFormat = Settings.Default.fbxFormat
             };
-            if (!NativeLibraries.FbxAvailable)
+            var format = (ModelFormat)Settings.Default.modelFormat;
+            if (format == ModelFormat.Fbx && !NativeLibraries.FbxAvailable)
             {
-                throw new NotSupportedException($"FBX export requires the native library {NativeLibraries.FbxLibraryFileName} in {NativeLibraries.NativeDirectory}");
+                throw new NotSupportedException($"FBX export requires the native library {NativeLibraries.FbxLibraryFileName} in {NativeLibraries.NativeDirectory} (glTF export does not: Export options > Model format)");
             }
-            ModelExporter.ExportFbx(exportPath, convert, exportOptions);
+            ModelExporter.ExportModel(exportPath, convert, exportOptions, format);
         }
 
         public static bool ExportDumpFile(AssetItem item, string exportPath)

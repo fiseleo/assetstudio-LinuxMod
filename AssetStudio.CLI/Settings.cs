@@ -49,6 +49,9 @@ namespace AssetStudio.CLI.Properties {
         public decimal boneSize => AppSettings.Get("boneSize", (decimal)10);
         public int fbxVersion => AppSettings.Get("fbxVersion", 3);
         public int fbxFormat => AppSettings.Get("fbxFormat", 0);
+        /// <summary>--model_format, else the "modelFormat" setting (Fbx, Gltf, Glb)</summary>
+        public ModelFormat modelFormat => ModelFormatOverride ?? AppSettings.Get("modelFormat", ModelFormat.Fbx);
+        public ModelFormat? ModelFormatOverride { get; set; }
         public decimal scaleFactor => AppSettings.Get("scaleFactor", (decimal)1);
         public bool exportBlendShape => AppSettings.Get("exportBlendShape", true);
         public bool castToBone => AppSettings.Get("castToBone", false);

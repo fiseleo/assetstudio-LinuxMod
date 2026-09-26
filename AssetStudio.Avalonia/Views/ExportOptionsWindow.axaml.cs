@@ -47,6 +47,7 @@ namespace AssetStudio.Avalonia.Views
             scaleFactor.Value = s.scaleFactor;
             fbxVersion.SelectedIndex = s.fbxVersion;
             fbxFormat.SelectedIndex = s.fbxFormat;
+            modelFormat.SelectedIndex = s.modelFormat;
             collectAnimations.IsChecked = s.collectAnimations;
             encrypted.IsChecked = s.encrypted;
             keyTextBox.Text = s.key.ToString("X2");
@@ -103,6 +104,7 @@ namespace AssetStudio.Avalonia.Views
             s.scaleFactor = scaleFactor.Value ?? 1;
             s.fbxVersion = fbxVersion.SelectedIndex;
             s.fbxFormat = fbxFormat.SelectedIndex;
+            s.modelFormat = Math.Max(0, modelFormat.SelectedIndex);
             s.collectAnimations = collectAnimations.IsChecked == true;
             s.encrypted = encrypted.IsChecked == true;
             s.key = key;

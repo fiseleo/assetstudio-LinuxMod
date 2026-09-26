@@ -415,10 +415,11 @@ namespace AssetStudio.CLI
             if (!TryExportFolder(exportPath, item, out var exportFullPath))
                 return false;
 
+            exportFullPath = Path.Combine(exportFullPath, FixFileName(item.Text) + ".fbx");
             var m_Animator = (Animator)item.Asset;
             var options = new ModelConverter.Options()
             {
-                imageFormat = Properties.Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat(Properties.Settings.Default.modelFormat, Properties.Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Properties.Settings.Default.collectAnimations,
                 exportMaterials = Properties.Settings.Default.exportMaterials,
@@ -456,7 +457,7 @@ namespace AssetStudio.CLI
         {
             var options = new ModelConverter.Options()
             {
-                imageFormat = Properties.Settings.Default.convertType,
+                imageFormat = ModelExporter.GetTextureFormat(Properties.Settings.Default.modelFormat, Properties.Settings.Default.convertType),
                 game = Studio.Game,
                 collectAnimations = Properties.Settings.Default.collectAnimations,
                 exportMaterials = Properties.Settings.Default.exportMaterials,
@@ -506,7 +507,7 @@ namespace AssetStudio.CLI
             };
             try
             {
-                ModelExporter.ExportFbx(exportPath, convert, exportOptions);
+                ModelExporter.ExportModel(exportPath, convert, exportOptions, Properties.Settings.Default.modelFormat);
             }
             catch (TypeInitializationException e) when (e.InnerException is DllNotFoundException)
             {

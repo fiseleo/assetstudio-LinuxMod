@@ -45,6 +45,7 @@ namespace AssetStudio.Avalonia
         public decimal boneSize = 10;
         public int fbxVersion = 3;
         public int fbxFormat = 0;
+        public int modelFormat = 0; //ModelFormat: 0 FBX, 1 glTF, 2 GLB
         public decimal scaleFactor = 1;
         public bool exportBlendShape = true;
         public bool castToBone = false;
