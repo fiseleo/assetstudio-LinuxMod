@@ -63,6 +63,15 @@ Note: Requires Internet connection to fetch asset_index jsons.
 - Known limitation: Some platform-specific texture compression formats may not decode correctly
 - Unity 6000.5+ bundles with *extracted* type trees: load the `.typetreedata` file with them (or keep it in the same folder)
 
+### Assets
+
+- **Models**: FBX, or **glTF 2.0** (`.gltf` / `.glb`, no native library) with skins, blend shapes and animations
+- **Addressables**: `catalog.json` / `catalog.bin` (loaded with the bundles or found next to them) give assets their address,
+  labels and bundles
+- **Shaders**: DirectX programs decompiled on Linux through Vulkan (vkd3d-shader + SPIRV-Cross), WebGPU programs as WGSL
+- **WebGL / WebGPU builds**: `.data` / `.data.br` / `.data.unityweb` files load directly
+- Linux GUI previews: videos (GStreamer), blend shapes, and models / materials drawn with the game's own Direct3D 11 shaders
+
 ### User Experience
 
 - **Interactive Version Prompt**: Automatic dialog for stripped Unity versions - no more error floods
@@ -97,7 +106,7 @@ Options (run with --help for all of them):
   --game <Normal|GI|SR|ZZZ|UnityCN|...> (REQUIRED)   Specify Game.
   --types <Texture2D|Shader:Parse|Sprite:Both|...>    Unity class type(s), space separated. Any class can be given:
                                                      classes without a converter are exported as JSON of their fields.
-  --names <regex> / --containers <regex>             Name / container filters.
+  --names <regex> / --containers <regex>             Name / container filters (containers also match Addressables addresses).
   --export_type <Convert|Raw|Dump|JSON>              How assets are exported. [default: Convert]
   --image_format <Png|Jpeg|Bmp|Tga>                  Texture export format. [default: Png]
   --group_assets <ByType|ByContainer|BySource|None>  How exported assets are grouped. [default: ByType]
@@ -106,6 +115,8 @@ Options (run with --help for all of them):
   --key <key>                                        XOR key to decrypt MiHoYoBinData.
   --ai_file <path>                                   asset_index json (to recover GI containers).
   --dummy_dlls <folder>                              Assemblies, for MonoBehaviours without type trees.
+  --model_format <Fbx|Gltf|Glb>                      Model export format. [default: Fbx]
+  --typetree_dumps <folder>                          TypeTreeDumps InfoJson files for Unity versions newer than the built-in database.
   --logger_flags <Verbose|Debug|Info|...>            Log events to show.
 ```
 
