@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -554,6 +554,98 @@ namespace AssetStudio
                 i += count * 4;
             }
             return result;
+        }
+    }
+
+    /// <summary>
+    /// The color space of the project a shader was built for (Linear or Gamma in the Player settings): Unity compiles it into
+    /// the programs, and a linear project samples its sRGB textures as such and writes to an sRGB target.
+    /// </summary>
+    public static class UnityColorSpace
+    {
+        /// <summary>
+        /// Whether a variant was built for a linear project: the dielectric constants of the built-in shaders
+        /// (unity_ColorSpaceDielectricSpec, compiled into the programs), else the Player settings loaded with the files
+        /// (of the same Unity version), else linear for the scriptable pipelines.
+        /// </summary>
+        public static bool IsLinear(UnityShaderVariant variant, Material material, out string source)
+        {
+            var programs = FromPrograms(variant);
+            if (programs != null)
+            {
+                source = "shader constants";
+                return programs.Value;
+            }
+            var settings = FromPlayerSettings(material?.assetsFile?.assetsManager, material?.assetsFile?.unityVersion);
+            if (settings != null)
+            {
+                source = "Player settings";
+                return settings.Value;
+            }
+            source = "default";
+            return IsScriptablePipeline(variant);
+        }
+
+        /// <summary>
+        /// m_ActiveColorSpace (0 gamma, 1 linear) of the PlayerSettings loaded with the files (of that Unity version when
+        /// given: files of several games can be loaded together); null when there are none.
+        /// </summary>
+        public static bool? FromPlayerSettings(AssetsManager manager, string unityVersion = null)
+        {
+            foreach (var file in manager?.assetsFileList.ToList() ?? new List<SerializedFile>())
+            {
+                if (unityVersion != null && file.unityVersion != unityVersion)
+                    continue;
+                foreach (var settings in file.Objects.OfType<PlayerSettings>())
+                {
+                    try
+                    {
+                        if (settings.ToType() is { } type && type.Contains("m_ActiveColorSpace"))
+                            return Convert.ToInt32(type["m_ActiveColorSpace"]) == 1;
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Verbose($"PlayerSettings of {file.fileName}: {e.Message}");
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// unity_ColorSpaceDielectricSpec is a constant of UnityCG: 0.2209163 (1 - it) in gamma projects, 0.04 (and 0.96) in
+        /// linear ones. Only the built-in pipeline's shaders use it; null when the programs don't tell.
+        /// </summary>
+        public static bool? FromPrograms(UnityShaderVariant variant)
+        {
+            if (variant?.Fragment?.Dxbc == null || IsScriptablePipeline(variant))
+                return null;
+            var code = variant.Fragment.Dxbc;
+            if (HasFloat(code, 0.220916301f) && HasFloat(code, 1 - 0.220916301f))
+                return false;
+            if (HasFloat(code, 0.04f) && HasFloat(code, 0.96f))
+                return true;
+            return null;
+        }
+
+        private static bool IsScriptablePipeline(UnityShaderVariant variant)
+        {
+            var lightMode = variant?.LightMode?.ToUpperInvariant() ?? "";
+            var name = variant?.ShaderName ?? "";
+            return lightMode.StartsWith("UNIVERSAL", StringComparison.Ordinal) || lightMode == "SRPDEFAULTUNLIT" || lightMode == "FORWARDONLY"
+                || name.StartsWith("Universal Render Pipeline/", StringComparison.Ordinal) || name.StartsWith("HDRP/", StringComparison.Ordinal)
+                || name.StartsWith("Shader Graphs/", StringComparison.Ordinal);
+        }
+
+        private static bool HasFloat(byte[] code, float value)
+        {
+            var bits = BitConverter.SingleToInt32Bits(value);
+            for (int i = 0; i + 4 <= code.Length; i += 4)
+            {
+                if (BitConverter.ToInt32(code, i) == bits)
+                    return true;
+            }
+            return false;
         }
     }
 

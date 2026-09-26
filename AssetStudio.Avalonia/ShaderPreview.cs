@@ -45,6 +45,7 @@ namespace AssetStudio.Avalonia
         private ShadedMesh gpuMesh;
         private bool prepared;
         private bool failed;
+        private bool linear; //the project's color space (one for the whole preview)
 
         /// <summary>What the preview draws with (the variants), or why it can't.</summary>
         public string Summary { get; private set; }
@@ -229,6 +230,12 @@ namespace AssetStudio.Avalonia
             {
                 if (prepared)
                     return;
+                var first = parts.FirstOrDefault(x => x.Variant != null);
+                if (first != null)
+                {
+                    linear = UnityColorSpace.IsLinear(first.Variant, first.Material, out var source);
+                    Summary += $"\ncolor space: {(linear ? "linear" : "gamma")} ({source})";
+                }
                 foreach (var part in parts.Where(x => x.Variant != null))
                 {
                     try
@@ -294,7 +301,7 @@ namespace AssetStudio.Avalonia
                 }
                 var pixels = new byte[image.Width * image.Height * 4];
                 image.CopyPixelDataTo(pixels);
-                return new DecodedTexture(new PreviewTexture(pixels, image.Width, image.Height), width, height);
+                return new DecodedTexture(new PreviewTexture(pixels, image.Width, image.Height) { Srgb = texture.m_ColorSpace != 0 }, width, height);
             }
             catch (Exception e)
             {
@@ -338,7 +345,7 @@ namespace AssetStudio.Avalonia
                     {
                         try
                         {
-                            part.Draw = gpu.CreateShadedDraw(part.Variant, part.Ranges, p => LoadTexture(part, p), p => DefaultTexture(part, p));
+                            part.Draw = gpu.CreateShadedDraw(part.Variant, part.Ranges, p => LoadTexture(part, p), p => DefaultTexture(part, p), linear);
                         }
                         catch (Exception e)
                         {
@@ -375,10 +382,10 @@ namespace AssetStudio.Avalonia
 
                 foreach (var part in parts.Where(x => x.Draw != null))
                 {
-                    var values = UnityShaderValues.CreateDefaults(false);
+                    var values = UnityShaderValues.CreateDefaults(linear);
                     values.SetCamera(Matrix4x4.Identity, Unmirror(position), Unmirror(target), Unmirror(up), width, height, fieldOfView);
                     values.SetLightFromCamera(Unmirror(position), Unmirror(target), Unmirror(up));
-                    values.SetMaterial(part.Material, name => part.TextureSizes.TryGetValue(name, out var size) ? size : null, false);
+                    values.SetMaterial(part.Material, name => part.TextureSizes.TryGetValue(name, out var size) ? size : null, linear);
                     gpu.UpdateShadedDraw(part.Draw, values);
                 }
                 return gpu.RenderShaded(gpuMesh, parts.Where(x => x.Draw != null).Select(x => x.Draw).ToList(), width, height);

@@ -46,6 +46,8 @@ namespace AssetStudio.Avalonia
     public sealed unsafe partial class VulkanMeshRenderer : IDisposable
     {
         private const Format ColorFormat = Format.B8G8R8A8Unorm;
+        //the same images seen as sRGB: the game shaders of linear projects write linear colors that the target encodes
+        private const Format SrgbFormat = Format.B8G8R8A8Srgb;
         private const int PushConstantSize = 128;
         private const int VertexFloats = 8;
 
@@ -97,15 +99,15 @@ namespace AssetStudio.Avalonia
         private CommandPool commandPool;
         private CommandBuffer commandBuffer;
         private Fence fence;
-        private RenderPass renderPass;
+        private RenderPass renderPass, renderPassSrgb;
         private PipelineLayout pipelineLayout;
         private DescriptorSetLayout descriptorSetLayout;
         private Sampler sampler;
         private VkImage whiteImage;
         private DeviceMemory whiteMemory;
         private ImageView whiteView;
-        private bool canBlitMipmaps;
-        private Pipeline fillPipeline, wireOverlayPipeline, wireOnlyPipeline, backgroundPipeline;
+        private bool canBlitMipmaps, canBlitMipmapsSrgb;
+        private Pipeline fillPipeline, wireOverlayPipeline, wireOnlyPipeline, backgroundPipeline, backgroundPipelineSrgb;
         private SampleCountFlags samples;
         private Format depthFormat;
         private PhysicalDeviceMemoryProperties memoryProperties;
@@ -114,8 +116,8 @@ namespace AssetStudio.Avalonia
         private int targetWidth, targetHeight;
         private VkImage colorImage, depthImage, resolveImage;
         private DeviceMemory colorMemory, depthMemory, resolveMemory;
-        private ImageView colorView, depthView, resolveView;
-        private Framebuffer framebuffer;
+        private ImageView colorView, depthView, resolveView, colorViewSrgb, resolveViewSrgb;
+        private Framebuffer framebuffer, framebufferSrgb;
         private VkBuffer readbackBuffer;
         private DeviceMemory readbackMemory;
         private void* readbackPointer;
@@ -128,7 +130,8 @@ namespace AssetStudio.Avalonia
             try
             {
                 CreateDevice();
-                CreateRenderPass();
+                renderPass = CreateRenderPass(ColorFormat);
+                renderPassSrgb = CreateRenderPass(SrgbFormat);
                 CreatePipelines();
                 CreateSampler();
             }
@@ -283,13 +286,13 @@ namespace AssetStudio.Avalonia
             return -1;
         }
 
-        private void CreateRenderPass()
+        private RenderPass CreateRenderPass(Format colorFormat)
         {
             bool msaa = samples != SampleCountFlags.Count1Bit;
             var attachments = stackalloc AttachmentDescription[3];
             attachments[0] = new AttachmentDescription
             {
-                Format = ColorFormat,
+                Format = colorFormat,
                 Samples = samples,
                 LoadOp = AttachmentLoadOp.Clear,
                 StoreOp = msaa ? AttachmentStoreOp.DontCare : AttachmentStoreOp.Store,
@@ -311,7 +314,7 @@ namespace AssetStudio.Avalonia
             };
             attachments[2] = new AttachmentDescription
             {
-                Format = ColorFormat,
+                Format = colorFormat,
                 Samples = SampleCountFlags.Count1Bit,
                 LoadOp = AttachmentLoadOp.DontCare,
                 StoreOp = AttachmentStoreOp.Store,
@@ -351,7 +354,8 @@ namespace AssetStudio.Avalonia
                 DependencyCount = 1,
                 PDependencies = &dependency,
             };
-            Check(vk.CreateRenderPass(device, in info, null, out renderPass), "vkCreateRenderPass");
+            Check(vk.CreateRenderPass(device, in info, null, out var pass), "vkCreateRenderPass");
+            return pass;
         }
 
         private ShaderModule LoadShader(string name)
@@ -411,6 +415,7 @@ namespace AssetStudio.Avalonia
             var wireFrag = LoadShader("wire.frag");
             var bgVert = LoadShader("background.vert");
             var bgFrag = LoadShader("background.frag");
+            var bgFragLinear = LoadShader("background_linear.frag");
             try
             {
                 // fill is pushed back a little so the wireframe overlay (depth test <=) wins on its own triangles
@@ -418,17 +423,20 @@ namespace AssetStudio.Avalonia
                 wireOverlayPipeline = CreatePipeline(meshVert, wireFrag, true, PrimitiveTopology.LineList, true, false, CompareOp.LessOrEqual, false);
                 wireOnlyPipeline = CreatePipeline(meshVert, wireFrag, true, PrimitiveTopology.LineList, false, false, CompareOp.Always, false);
                 backgroundPipeline = CreatePipeline(bgVert, bgFrag, false, PrimitiveTopology.TriangleList, false, false, CompareOp.Always, false);
+                backgroundPipelineSrgb = CreatePipeline(bgVert, bgFragLinear, false, PrimitiveTopology.TriangleList, false, false, CompareOp.Always, false, renderPassSrgb);
             }
             finally
             {
-                foreach (var module in new[] { meshVert, meshFrag, wireFrag, bgVert, bgFrag })
+                foreach (var module in new[] { meshVert, meshFrag, wireFrag, bgVert, bgFrag, bgFragLinear })
                     vk.DestroyShaderModule(device, module, null);
             }
         }
 
         private Pipeline CreatePipeline(ShaderModule vert, ShaderModule frag, bool vertexInput, PrimitiveTopology topology,
-            bool depthTest, bool depthWrite, CompareOp compareOp, bool depthBias)
+            bool depthTest, bool depthWrite, CompareOp compareOp, bool depthBias, RenderPass pass = default)
         {
+            if (pass.Handle == 0)
+                pass = renderPass;
             var entry = (byte*)SilkMarshal.StringToPtr("main");
             try
             {
@@ -527,7 +535,7 @@ namespace AssetStudio.Avalonia
                     PColorBlendState = &colorBlend,
                     PDynamicState = &dynamicState,
                     Layout = pipelineLayout,
-                    RenderPass = renderPass,
+                    RenderPass = pass,
                     Subpass = 0,
                 };
                 Check(vk.CreateGraphicsPipelines(device, default, 1, in info, null, out var pipeline), "vkCreateGraphicsPipelines");
@@ -595,11 +603,12 @@ namespace AssetStudio.Avalonia
         }
 
         private void CreateImage(int width, int height, Format format, SampleCountFlags sampleCount, ImageUsageFlags usage, ImageAspectFlags aspect,
-            out VkImage image, out DeviceMemory memory, out ImageView view)
+            out VkImage image, out DeviceMemory memory, out ImageView view, ImageCreateFlags flags = 0)
         {
             var info = new ImageCreateInfo
             {
                 SType = StructureType.ImageCreateInfo,
+                Flags = flags,
                 ImageType = ImageType.Type2D,
                 Format = format,
                 Extent = new Extent3D((uint)width, (uint)height, 1),
@@ -632,6 +641,21 @@ namespace AssetStudio.Avalonia
             Check(vk.CreateImageView(device, in viewInfo, null, out view), "vkCreateImageView");
         }
 
+        /// <summary>Another view of a (mutable format) color image.</summary>
+        private ImageView CreateColorView(VkImage image, Format format)
+        {
+            var viewInfo = new ImageViewCreateInfo
+            {
+                SType = StructureType.ImageViewCreateInfo,
+                Image = image,
+                ViewType = ImageViewType.Type2D,
+                Format = format,
+                SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1),
+            };
+            Check(vk.CreateImageView(device, in viewInfo, null, out var view), "vkCreateImageView");
+            return view;
+        }
+
         private void DestroyImage(ref VkImage image, ref DeviceMemory memory, ref ImageView view)
         {
             if (view.Handle != 0) vk.DestroyImageView(device, view, null);
@@ -658,13 +682,15 @@ namespace AssetStudio.Avalonia
             bool msaa = samples != SampleCountFlags.Count1Bit;
             CreateImage(width, height, ColorFormat, samples,
                 msaa ? ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransientAttachmentBit : ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferSrcBit,
-                ImageAspectFlags.ColorBit, out colorImage, out colorMemory, out colorView);
+                ImageAspectFlags.ColorBit, out colorImage, out colorMemory, out colorView, ImageCreateFlags.CreateMutableFormatBit);
+            colorViewSrgb = CreateColorView(colorImage, SrgbFormat);
             CreateImage(width, height, depthFormat, samples, ImageUsageFlags.DepthStencilAttachmentBit | (msaa ? ImageUsageFlags.TransientAttachmentBit : 0),
                 ImageAspectFlags.DepthBit, out depthImage, out depthMemory, out depthView);
             if (msaa)
             {
                 CreateImage(width, height, ColorFormat, SampleCountFlags.Count1Bit, ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferSrcBit,
-                    ImageAspectFlags.ColorBit, out resolveImage, out resolveMemory, out resolveView);
+                    ImageAspectFlags.ColorBit, out resolveImage, out resolveMemory, out resolveView, ImageCreateFlags.CreateMutableFormatBit);
+                resolveViewSrgb = CreateColorView(resolveImage, SrgbFormat);
             }
             var views = stackalloc ImageView[] { colorView, depthView, resolveView };
             var info = new FramebufferCreateInfo
@@ -678,6 +704,10 @@ namespace AssetStudio.Avalonia
                 Layers = 1,
             };
             Check(vk.CreateFramebuffer(device, in info, null, out framebuffer), "vkCreateFramebuffer");
+            var srgbViews = stackalloc ImageView[] { colorViewSrgb, depthView, resolveViewSrgb };
+            info.RenderPass = renderPassSrgb;
+            info.PAttachments = srgbViews;
+            Check(vk.CreateFramebuffer(device, in info, null, out framebufferSrgb), "vkCreateFramebuffer");
 
             CreateBuffer((ulong)width * (ulong)height * 4, BufferUsageFlags.TransferDstBit, MemoryPropertyFlags.HostCachedBit, out readbackBuffer, out readbackMemory);
             void* mapped;
@@ -692,7 +722,11 @@ namespace AssetStudio.Avalonia
             if (device.Handle == 0)
                 return;
             if (framebuffer.Handle != 0) vk.DestroyFramebuffer(device, framebuffer, null);
-            framebuffer = default;
+            if (framebufferSrgb.Handle != 0) vk.DestroyFramebuffer(device, framebufferSrgb, null);
+            framebuffer = framebufferSrgb = default;
+            if (colorViewSrgb.Handle != 0) vk.DestroyImageView(device, colorViewSrgb, null);
+            if (resolveViewSrgb.Handle != 0) vk.DestroyImageView(device, resolveViewSrgb, null);
+            colorViewSrgb = resolveViewSrgb = default;
             DestroyImage(ref colorImage, ref colorMemory, ref colorView);
             DestroyImage(ref depthImage, ref depthMemory, ref depthView);
             DestroyImage(ref resolveImage, ref resolveMemory, ref resolveView);
@@ -712,6 +746,8 @@ namespace AssetStudio.Avalonia
             vk.GetPhysicalDeviceFormatProperties(physicalDevice, ColorFormat, out var formatProps);
             const FormatFeatureFlags blit = FormatFeatureFlags.BlitSrcBit | FormatFeatureFlags.BlitDstBit | FormatFeatureFlags.SampledImageFilterLinearBit;
             canBlitMipmaps = (formatProps.OptimalTilingFeatures & blit) == blit;
+            vk.GetPhysicalDeviceFormatProperties(physicalDevice, SrgbFormat, out var srgbProps);
+            canBlitMipmapsSrgb = (srgbProps.OptimalTilingFeatures & blit) == blit;
             var info = new SamplerCreateInfo
             {
                 SType = StructureType.SamplerCreateInfo,
@@ -744,7 +780,7 @@ namespace AssetStudio.Avalonia
         }
 
         private void ImageBarrier(CommandBuffer cmd, VkImage image, uint mip, uint mipCount, ImageLayout from, ImageLayout to,
-            AccessFlags srcAccess, AccessFlags dstAccess, PipelineStageFlags srcStage, PipelineStageFlags dstStage)
+            AccessFlags srcAccess, AccessFlags dstAccess, PipelineStageFlags srcStage, PipelineStageFlags dstStage, uint layers = 1)
         {
             var barrier = new ImageMemoryBarrier
             {
@@ -756,21 +792,21 @@ namespace AssetStudio.Avalonia
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 Image = image,
-                SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, mip, mipCount, 0, 1),
+                SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, mip, mipCount, 0, layers),
             };
             vk.CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, in barrier);
         }
 
         /// <summary>Uploads a BGRA texture with a full mip chain (generated on the GPU when the format supports blits).</summary>
-        private void UploadTexture(PreviewTexture texture, out VkImage image, out DeviceMemory memory, out ImageView view)
+        private void UploadTexture(PreviewTexture texture, out VkImage image, out DeviceMemory memory, out ImageView view, Format format = ColorFormat)
         {
             int width = texture.Width, height = texture.Height;
-            var mipLevels = canBlitMipmaps ? (uint)Math.Floor(Math.Log2(Math.Max(width, height))) + 1 : 1u;
+            var mipLevels = (format == SrgbFormat ? canBlitMipmapsSrgb : canBlitMipmaps) ? (uint)Math.Floor(Math.Log2(Math.Max(width, height))) + 1 : 1u;
             var info = new ImageCreateInfo
             {
                 SType = StructureType.ImageCreateInfo,
                 ImageType = ImageType.Type2D,
-                Format = ColorFormat,
+                Format = format,
                 Extent = new Extent3D((uint)width, (uint)height, 1),
                 MipLevels = mipLevels,
                 ArrayLayers = 1,
@@ -839,7 +875,7 @@ namespace AssetStudio.Avalonia
                     SType = StructureType.ImageViewCreateInfo,
                     Image = image,
                     ViewType = ImageViewType.Type2D,
-                    Format = ColorFormat,
+                    Format = format,
                     SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, mipLevels, 0, 1),
                 };
                 Check(vk.CreateImageView(device, in viewInfo, null, out view), "vkCreateImageView");
@@ -1140,7 +1176,7 @@ namespace AssetStudio.Avalonia
                 vk.DeviceWaitIdle(device);
                 DestroyTarget();
                 DestroyShadedResources();
-                foreach (var pipeline in new[] { fillPipeline, wireOverlayPipeline, wireOnlyPipeline, backgroundPipeline })
+                foreach (var pipeline in new[] { fillPipeline, wireOverlayPipeline, wireOnlyPipeline, backgroundPipeline, backgroundPipelineSrgb })
                 {
                     if (pipeline.Handle != 0)
                         vk.DestroyPipeline(device, pipeline, null);
@@ -1150,6 +1186,7 @@ namespace AssetStudio.Avalonia
                 if (sampler.Handle != 0) vk.DestroySampler(device, sampler, null);
                 DestroyImage(ref whiteImage, ref whiteMemory, ref whiteView);
                 if (renderPass.Handle != 0) vk.DestroyRenderPass(device, renderPass, null);
+                if (renderPassSrgb.Handle != 0) vk.DestroyRenderPass(device, renderPassSrgb, null);
                 if (fence.Handle != 0) vk.DestroyFence(device, fence, null);
                 if (commandPool.Handle != 0) vk.DestroyCommandPool(device, commandPool, null);
                 vk.DestroyDevice(device, null);

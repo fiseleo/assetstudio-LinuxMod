@@ -60,6 +60,8 @@ namespace AssetStudio
 
     public class Texture2D : Texture
     {
+        /// <summary>1: the pixels are sRGB (the importer's sRGB setting), sampled as such by linear projects; 0: linear data.</summary>
+        public int m_ColorSpace = 1;
         public int m_Width;
         public int m_Height;
         public int m_CompleteImageSize;
@@ -153,7 +155,7 @@ namespace AssetStudio
             }
             if (version[0] > 3 || (version[0] == 3 && version[1] >= 5)) //3.5.0 and up
             {
-                var m_ColorSpace = reader.ReadInt32();
+                m_ColorSpace = reader.ReadInt32();
             }
             // Check TypeTree first - if it exists and doesn't have this field, skip it
             var hasPlatformBlob = TypeTreeHasField(reader.serializedType, "m_PlatformBlob");

@@ -9,7 +9,11 @@ namespace AssetStudio.Avalonia
     using Vector3 = System.Numerics.Vector3;
 
     /// <summary>A decoded texture for the preview: tightly packed BGRA, top row first.</summary>
-    public sealed record PreviewTexture(byte[] Bgra, int Width, int Height);
+    public sealed record PreviewTexture(byte[] Bgra, int Width, int Height)
+    {
+        /// <summary>Colors in sRGB (Unity's sRGB texture setting); false for data such as normal maps.</summary>
+        public bool Srgb { get; init; } = true;
+    }
 
     /// <summary>A range of the index list (whole triangles) drawn with one texture (-1 = untextured).</summary>
     public readonly record struct DrawRange(int Start, int Count, int Texture);

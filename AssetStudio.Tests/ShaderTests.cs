@@ -6,6 +6,36 @@ using Vec4 = System.Numerics.Vector4;
 
 namespace AssetStudio.Tests
 {
+    public class ColorSpaceTests
+    {
+        private static UnityShaderVariant Variant(string shader, string lightMode, params float[] constants)
+        {
+            //a program with immediate constants (the detection only looks at 4 byte aligned values)
+            var code = new byte[16 + constants.Length * 4];
+            for (int i = 0; i < constants.Length; i++)
+                BitConverter.GetBytes(constants[i]).CopyTo(code, 16 + i * 4);
+            return new UnityShaderVariant { ShaderName = shader, LightMode = lightMode, Fragment = new UnityShaderStage { Dxbc = code }, Vertex = new UnityShaderStage { Dxbc = new byte[16] } };
+        }
+
+        [Fact]
+        public void BuiltInShaders_TellTheirColorSpaceByTheDielectricConstant()
+        {
+            Assert.False(UnityColorSpace.IsLinear(Variant("Standard", "ForwardBase", 0.220916301f, 1 - 0.220916301f), null, out var source));
+            Assert.Equal("shader constants", source);
+            Assert.True(UnityColorSpace.IsLinear(Variant("Standard", "ForwardBase", 0.04f, 0.96f), null, out source));
+            Assert.Equal("shader constants", source);
+        }
+
+        [Fact]
+        public void WithoutConstants_ScriptablePipelinesAreLinearAndBuiltInGamma()
+        {
+            Assert.True(UnityColorSpace.IsLinear(Variant("Universal Render Pipeline/Lit", "UniversalForward", 0.04f, 0.96f), null, out var source));
+            Assert.Equal("default", source); //URP's BRDF constants are the same in both spaces
+            Assert.False(UnityColorSpace.IsLinear(Variant("Unlit/Texture", ""), null, out source));
+            Assert.Equal("default", source);
+        }
+    }
+
     public class ShaderTranslationTests
     {
         private const string VertexHlsl = @"
