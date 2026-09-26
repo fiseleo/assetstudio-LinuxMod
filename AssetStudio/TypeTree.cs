@@ -10,5 +10,7 @@ namespace AssetStudio
     {
         public List<TypeTreeNode> m_Nodes;
         public byte[] m_StringBuffer;
+        /// <summary>Type trees of [SerializeReference] classes, for type trees built without a serialized file (from assemblies).</summary>
+        public RefTypeResolver m_RefTypeResolver;
     }
 }

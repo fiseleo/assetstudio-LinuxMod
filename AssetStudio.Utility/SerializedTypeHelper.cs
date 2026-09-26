@@ -20,6 +20,44 @@ namespace AssetStudio
             AddString(nodes, "m_Name", indent + 1);
         }
 
+        /// <summary>
+        /// Layout of [SerializeReference] fields: 0 = not supported, 2 = registry at the end of the object (2021.2 to 6000.6),
+        /// 3 = registry frame in front of the first script field (6000.7 and up).
+        /// </summary>
+        public int ManagedReferencesVersion
+        {
+            get
+            {
+                if (version[0] > 6000 || (version[0] == 6000 && version[1] >= 7))
+                    return 3;
+                if (version[0] > 2021 || (version[0] == 2021 && version[1] >= 2))
+                    return 2;
+                return 0;
+            }
+        }
+
+        public void AddManagedReference(List<TypeTreeNode> nodes, string type, string name, int indent)
+        {
+            nodes.Add(new TypeTreeNode(type, name, indent, false) { m_TypeFlags = 2 });
+            nodes.Add(new TypeTreeNode("SInt64", "rid", indent + 1, false));
+        }
+
+        public void AddManagedReferencesRegistry(List<TypeTreeNode> nodes, int indent)
+        {
+            nodes.Add(new TypeTreeNode("ManagedReferencesRegistry", "references", indent, false) { m_TypeFlags = 4 });
+            nodes.Add(new TypeTreeNode("int", "version", indent + 1, false));
+            nodes.Add(new TypeTreeNode("vector", "RefIds", indent + 1, false));
+            nodes.Add(new TypeTreeNode("Array", "Array", indent + 2, true));
+            nodes.Add(new TypeTreeNode("int", "size", indent + 3, false));
+            nodes.Add(new TypeTreeNode("ReferencedObject", "data", indent + 3, false));
+            nodes.Add(new TypeTreeNode("SInt64", "rid", indent + 4, false));
+            nodes.Add(new TypeTreeNode("ReferencedManagedType", "type", indent + 4, false));
+            AddString(nodes, "class", indent + 5);
+            AddString(nodes, "ns", indent + 5);
+            AddString(nodes, "asm", indent + 5);
+            nodes.Add(new TypeTreeNode("ReferencedObjectData", "data", indent + 4, false));
+        }
+
         public void AddPPtr(List<TypeTreeNode> nodes, string type, string name, int indent)
         {
             nodes.Add(new TypeTreeNode($"PPtr<{type}>", name, indent, false));

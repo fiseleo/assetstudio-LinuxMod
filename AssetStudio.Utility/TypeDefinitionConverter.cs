@@ -125,7 +125,28 @@ namespace AssetStudio
         private List<TypeTreeNode> ProcessingFieldRef(FieldReference fieldDef)
         {
             var typeRef = TypeResolver.Resolve(fieldDef.FieldType);
+            if (Helper.ManagedReferencesVersion > 0 && fieldDef.Resolve() is FieldDefinition fieldDefinition && UnitySerializationLogic.HasSerializeReferenceAttribute(fieldDefinition))
+            {
+                return ManagedReferenceToTypeTreeNodes(typeRef, fieldDef.Name, Indent);
+            }
             return TypeRefToTypeTreeNodes(typeRef, fieldDef.Name, Indent, false);
+        }
+
+        // A [SerializeReference] field only stores the id of the object, the object itself is in the registry.
+        private List<TypeTreeNode> ManagedReferenceToTypeTreeNodes(TypeReference typeRef, string name, int indent)
+        {
+            var nodes = new List<TypeTreeNode>();
+            if (CecilUtils.IsGenericList(typeRef) || typeRef.IsArray)
+            {
+                nodes.Add(new TypeTreeNode(typeRef.Name, name, indent, false) { m_TypeFlags = 8 });
+                Helper.AddArray(nodes, indent + 1);
+                Helper.AddManagedReference(nodes, "managedRefArrayItem", "data", indent + 2);
+            }
+            else
+            {
+                Helper.AddManagedReference(nodes, "managedReference", name, indent);
+            }
+            return nodes;
         }
 
         private static bool IsStruct(TypeReference typeRef)
