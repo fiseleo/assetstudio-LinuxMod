@@ -1,4 +1,4 @@
-# AssetStudio - Current State
+﻿# AssetStudio - Current State
 
 **Last updated**: 2026-09-27, branch `linux-port` (based on v2.4.x, not pushed yet)
 **For**: people and AI assistants picking up the work. History before the Linux port: `git log main`.
@@ -21,7 +21,7 @@
 |------|-------|
 | Textures | Texture2D, Sprite, SpriteAtlas; **Cubemap** (exported as a horizontal cross), **Texture2DArray / Texture3D** (a folder with an image per slice), **CubemapArray** (a cross per cube). GraphicsFormat (2019.1+) mapped to the decoders' TextureFormat |
 | Shaders | Unity 5.x to 6000.7, including 6000.x player subprograms (`m_PlayerSubPrograms`). On Linux, DirectX programs (D3D9 bytecode, DXBC SM4/5, DXIL) → Vulkan SPIR-V (vkd3d-shader) → GLSL (SPIRV-Cross). Platform 28 = **D3D12** (6000.7) exported like D3D11. **WebGPU** (26): the WGSL of both stages (program type 33); Switch2 (27) like the consoles. Program parameters read from the blobs (`BlobProgramParameters`: after the byte code up to 2021.3.9, parameter entries from 2021.3.10) |
-| Game shader preview (Avalonia) | Materials (on a sphere) and models drawn with their own shaders: forward pass and keyword variant chosen per material, **Direct3D 11** programs → SPIR-V (vkd3d) → Vulkan pipeline; constant buffers from Unity's layouts with built-in values (camera, light, SH) and material properties; textures, pass state (cull, reversed-Z depth, blend). `AssetStudio.Utility/ShaderRendering.cs`, `AssetStudio.Avalonia/ShaderPreview.cs`, `VulkanMeshRenderer.Shaded.cs` |
+| Game shader preview (Avalonia) | Materials (on a sphere) and models drawn with their own shaders: forward pass and keyword variant chosen per material. **Direct3D 11** programs → SPIR-V (vkd3d); **Vulkan** programs as they are (SMOL-V 0/1, bind channels, `(stages << 24) \| (set << 16) \| binding` registers, their own Y flip); **GLES3 / GLCore** GLSL → SPIR-V (glslang, relaxed Vulkan rules) and **WebGPU** WGSL → SPIR-V (naga), their parameters by name. Constant buffers with built-in values (camera, light, SH, legacy vertex lights) and material properties; textures, pass state. Color space from the compiled constants / PlayerSettings (sRGB target and textures for linear), a 64² sky cube with mips as the probe, main light shadows (shadow map; SHADOWS_SCREEN collection, URP `_MAIN_LIGHT_SHADOWS`). Prepared in the background, SPIR-V and decoded textures cached, sub meshes of one material in one draw. `AssetStudio.Utility/ShaderRendering.cs`, `AssetStudio.Avalonia/ShaderPreview.cs`, `VulkanMeshRenderer.Shaded.cs`, `VulkanMeshRenderer.Shadows.cs` |
 | MonoBehaviour | From the file's type tree (also **extracted type trees**: `.typetreedata` archives given with the files or next to them), or from assemblies (Load assembly folder / `--dummy_dlls`). **`[SerializeReference]`** registries: version 1 (2019.3 to 2021.1), 2 (2021.2+), 3 (6000.7, a frame in front of the first script field), with type trees and with assemblies |
 | Other classes | Any class is dumped (`Dump`) and exported as JSON of its type tree; the CLI exports any class given with `--types`. **TerrainData**: heightmap as 16-bit PNG + Unity RAW + JSON |
 | Models | FBX export (Windows and Linux) and **glTF 2.0** (.gltf / .glb, no native library): hierarchy, sub meshes, materials and textures, skins, blend shapes (morph targets), animations (transforms and blend shape weights). Avalonia preview: Vulkan (software fallback), textured, meshes placed by their hierarchy, **skinned, animations played** (Animator controller or legacy Animation clips), skeleton overlay, **blend shape sliders** (clips drive them too) |
@@ -41,14 +41,16 @@
   verified with synthetic files (no public sample). Texture3D and Cubemap are verified with real files (keijiro's WebGPU samples).
 - The type tree database ends at 6000.7.0a3 (TypeTreeDumps itself ends there, 2026-07): newer files without type trees
   are read with the latest known layouts unless newer InfoJson files are put in the TypeTreeDumps folder.
-- Game shader preview: Direct3D 11 programs only (Windows builds and bundles); GLES, Metal, Vulkan and WebGPU programs,
+- Game shader preview: no Metal, console or GLSL ES 1.0 programs; programs reading structured buffers (VFX Graph) are refused;
+  real reflection probes / skyboxes are not used (no sample had baked ones); GPU instancing variants are avoided.
+  Previously: Direct3D 11 programs only; GLES, Metal, Vulkan and WebGPU programs,
   shadow maps, lightmaps, reflection probes and linear color space are not set up (grey sky, gamma). Models were only
   tested with a substituted material (no public Direct3D 11 bundle with a textured model was found).
 - Video preview needs GStreamer (playbin, appsink); tested with generated mp4 / webm / ogv, no VideoClip from a real file.
-- glTF: one shape per blend shape channel (the full weight in-between frame); materials map the base color, normal map and emission.
+- glTF: in-between blend shapes are targets of their own (`name@weight`); Standard / URP / HDRP Lit materials map metallic, roughness, occlusion, emission (HDR through `KHR_materials_emissive_strength`), alpha modes; other shaders the base color, normal map and emission.
 - Addressables: JSON catalogs of Addressables 1.19+ only tested through the format of the older ones and Unity's reader code.
 - WinForms GUI: previews the new texture types and TerrainData (only compiled on Linux, not run); no animation preview.
-- No automated tests in the repository (see *How things were verified*).
+- Tests: `AssetStudio.Tests` (xUnit, 59 tests: shaders and their parameters, Vulkan / GLSL / WGSL programs, color space, shadows, Addressables, AssetMaps, glTF, blend shapes, file formats), run by the Linux CI job.
 
 ## How things were verified
 
@@ -64,7 +66,13 @@
 - **Addressables binary catalogs**: written by Unity's own serializer (Addressables 1.21.14, 1.21.18, 1.21.21, 2.11.2, 4.0.1
   sources compiled with stubs) and read back with every location, key and dependency equal.
 - **Game shaders**: variants and parameters checked against the serialized parameters where both exist (5.6, 2019.4);
-  renders of the D3D11 sample materials.
+  renders of the D3D11 sample materials; the Vulkan (2021.3 player), GLES3 (Unity-chan WebGL, a 2021.3 URP WebGL2 build)
+  and WebGPU (keijiro's 6000.0 and deml.io's 6000.3 to 6000.6 builds) paths rendered with the Khronos validation layer
+  (synchronization validation included) reporting nothing; 2853 of 2866 GLES3 and ~95% of the WebGPU programs compile;
+  the D3D11 renders stay pixel-identical as the other paths were added. Shadows' Y convention checked by A/B renders;
+  the SMOL-V decoder checked with spirv-val. Color spaces: a gamma (5.6) and a linear (2021.3) Standard, URP.
+- **Decentraland's Windows bundles** (Unity 6000.2, `ab-cdn.decentraland.org`, textured and skinned models with animations):
+  193 models exported to GLB with no validator errors.
 - **GUI**: an Avalonia.Headless harness (drives `MainWindow`, captures the previews). When starting the real GUI for
   tests, use Xvfb, `dbus-run-session` and a scratch `XDG_CONFIG_HOME`, so dialogs and settings don't reach the desktop session.
 - DXIL: programs compiled with Microsoft's `dxc` for Linux.
@@ -101,4 +109,4 @@ Windows: open `AssetStudio.sln`, build `AssetStudio.GUI` / `AssetStudio.CLI` (ne
 - Push the branch and run CI (Linux jobs never ran on GitHub).
 - Move the verification harnesses (synthetic SerializedFile writer, type tree differential checks) into a test project.
 - Animation preview in the WinForms GUI.
-- Game shader preview for GLES / Vulkan / WebGPU programs (needs a GLSL / WGSL to SPIR-V compiler), shadows, linear color space.
+- Game shader preview: Metal programs (would need a MSL front end), baked reflection probes and skyboxes, additional lights.

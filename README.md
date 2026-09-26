@@ -1,4 +1,4 @@
-# Unity Extractor Utility Asset Studio (multi-threaded)
+﻿# Unity Extractor Utility Asset Studio (multi-threaded)
 
 **Version 2.4.0**
 
@@ -70,7 +70,8 @@ Note: Requires Internet connection to fetch asset_index jsons.
   labels and bundles
 - **Shaders**: DirectX programs decompiled on Linux through Vulkan (vkd3d-shader + SPIRV-Cross), WebGPU programs as WGSL
 - **WebGL / WebGPU builds**: `.data` / `.data.br` / `.data.unityweb` files load directly
-- Linux GUI previews: videos (GStreamer), blend shapes, and models / materials drawn with the game's own Direct3D 11 shaders
+- Linux GUI previews: videos (GStreamer), blend shapes, and models / materials drawn with the game's own shaders
+  (Direct3D 11, Vulkan, OpenGL ES 3 / OpenGL and WebGPU programs, with the project's color space and shadows)
 
 ### User Experience
 
@@ -146,3 +147,4 @@ Special Thank to:
   (`AssetStudio/Resources/lzma.tpk`, the one [UnityPy](https://github.com/K0lb3/UnityPy) (MIT) ships) and the class layouts of every Unity version.
 - [Unity-Technologies/UnityDataTools](https://github.com/Unity-Technologies/UnityDataTools) test data, used to check Unity 6000.x support.
 - [vkd3d](https://gitlab.winehq.org/wine/vkd3d) (LGPL-2.1) and [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) (Apache-2.0): DirectX shaders on Linux.
+- [glslang](https://github.com/KhronosGroup/glslang) (BSD / MIT / Apache-2.0) and [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) (MIT / Apache-2.0): GLSL and WGSL programs in the game shader preview.

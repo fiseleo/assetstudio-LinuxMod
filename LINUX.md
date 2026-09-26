@@ -1,4 +1,4 @@
-# AssetStudio on Linux
+﻿# AssetStudio on Linux
 
 The Windows GUI (`AssetStudio.GUI`) is WinForms and only runs on Windows. Linux uses
 **`AssetStudio.Avalonia`**, a cross-platform GUI built with [Avalonia](https://avaloniaui.net/)
@@ -48,7 +48,9 @@ Same layout and menus as the Windows GUI:
   text / shader / MonoBehaviour / AnimationClip, fonts, audio info + playback (pause, loop, seek, volume),
   mesh and model 3D preview (Vulkan GPU renderer, see below: left drag rotate, right drag pan, wheel zoom, `Ctrl+W` wireframe;
   a bar under the view plays the model's animations and shows its skeleton; **Blend shapes** opens a slider per blend shape;
-  **Game shaders** draws the model with its own shaders), materials on a sphere with their shader (Direct3D 11 programs),
+  **Game shaders** draws the model with its own shaders), materials on a sphere with their shader (Direct3D 11, Vulkan,
+  OpenGL ES 3 / OpenGL or WebGPU programs; the project's color space, a sky reflection, the main light's shadows;
+  compiled in the background, the plain preview until then),
   VideoClip / MovieTexture playback (GStreamer; or *Open externally*), Dump tab (also for files built without type trees)
 - Export: Convert / Raw / Dump / JSON for all, selected or filtered assets, asset list XML,
   scene hierarchy JSON, class structures, Addressables catalogs (JSON). Models as FBX or glTF 2.0
@@ -77,6 +79,8 @@ Windows; when that folder is read-only (AppImage, `.deb` install) they go to `~/
 | HLSLDecompiler / d3dcompiler | DirectX shader decompile | Windows only. On Linux DirectX programs go through Vulkan instead (next rows) |
 | vkd3d-shader (`libvkd3d-shader.so`) | DirectX shader (SM2/3 bytecode, SM4/5 DXBC) → Vulkan SPIR-V | included (vkd3d 2.1 + `linux/vkd3d-sm1-instructions.patch`, LGPL-2.1, rebuilt via `build-vkd3d-linux.sh`) |
 | SPIRV-Cross (`libspirv-cross-c-shared.so`) | SPIR-V → Vulkan GLSL (readable shader code) | included (Apache-2.0, rebuilt via `build-spirvcross-linux.sh`). Without it the SPIR-V disassembly is written instead |
+| glslang (`libglslang.so`) | GLSL (Unity's GLES3 / OpenGL programs) → SPIR-V, for the game shader preview | included (glslang 16.6.0, BSD / MIT / Apache-2.0, grammar GPL-3.0 with the Bison exception; only the C interface exported; rebuilt via `build-glslang-linux.sh`) |
+| naga (`libnaga_c.so`) | WGSL (Unity's WebGPU programs) → SPIR-V, for the game shader preview | included (naga 30, MIT OR Apache-2.0, through `linux/naga-c`; rebuilt via `build-naga-linux.sh`, needs Rust) |
 | Vulkan loader + driver (`libvulkan.so.1`) | GPU mesh / model preview | system (e.g. `libvulkan1` + the GPU driver's Vulkan ICD) |
 
 Optional libraries are loaded from the `x64/` folder next to the executable using Linux names:
@@ -128,7 +132,9 @@ instead (play / stop only).
 - 套件：`./build-packages.sh` 產生 AppImage（單一檔案，直接執行；`./AssetStudio-x86_64.AppImage cli ...` 為命令列版）與 `.deb`（`sudo apt install ./assetstudio_*.deb`，安裝到 `/opt/assetstudio`）。程式資料夾唯讀時，`Keys.json`、`Maps/` 與 log 會改存到 `~/.local/share/AssetStudio`。
 - 設定檔位於 `~/.config/AssetStudio/settings.json`。
 - 模型可匯出成 glTF 2.0（Export options > Model format 選 `.gltf` 或 `.glb`，不需要 FBX 原生庫；CLI 用 `--model_format Gltf|Glb`），包含骨架、蒙皮、blendshape 與動畫。
-- 預覽下方的 Blend shapes 按鈕可逐一調整 blendshape；Game shaders 會用遊戲自己的 shader（Direct3D 11 程式）來畫模型，選取 Material 時則用它的 shader 畫一顆球。
+- 預覽下方的 Blend shapes 按鈕可逐一調整 blendshape；Game shaders 會用遊戲自己的 shader 來畫模型（Direct3D 11、Vulkan、OpenGL ES 3 / OpenGL 或 WebGPU 程式，依專案的 linear / gamma 色彩空間，含天空反射與主光源陰影；在背景編譯，完成前先顯示一般預覽），選取 Material 時則用它的 shader 畫一顆球。
+- glTF 匯出也包含 in-between blendshape、metallic / occlusion / emission 貼圖（Standard 與 URP / HDRP Lit），Unity 的 DXT5nm 法線貼圖會轉成 RGB。
+- CLI / GUI 建立的 AssetMap（XML / JSON / `.map`）在有 Addressables catalog 時會多一個 Address 欄位，`--containers` 也會比對 address。
 - VideoClip / MovieTexture 可直接播放（需要 GStreamer），也可以用外部播放器開啟。
 - Addressables：與 bundle 一起載入（或放在同資料夾、上兩層以內）的 `catalog.json` / `catalog.bin` 會提供每個資源的 address、label 與所屬 bundle；CLI 的 `--containers` 也會比對 address，並輸出 `AddressablesCatalogs.json`。
 - 比內建資料庫更新的 Unity 版本：把 TypeTreeDumps 的 InfoJson（`<版本>.json`）放進 Options > Type tree dumps folder 指定的資料夾（CLI 用 `--typetree_dumps`）。
