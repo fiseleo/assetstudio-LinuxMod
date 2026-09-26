@@ -82,6 +82,20 @@ namespace AssetStudio.Avalonia
         {
             if (variant.IsVulkan)
                 return (variant.Vertex.Spirv, variant.Fragment.Spirv); //the game's own
+            if (variant.IsGlsl)
+            {
+                //compiled together (the stages' inputs and outputs, the default uniform block)
+                var glslKey = "glsl" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(variant.Vertex.Glsl + "\0" + variant.Fragment.Glsl)));
+                if (cache.TryGetValue(glslKey, out var compiled))
+                    return compiled;
+                //glslang numbers the bindings of each stage from 0: the fragment program's descriptors go to set 1
+                var (vertex, fragment) = Glslang.Compile(variant.Vertex.Glsl, variant.Fragment.Glsl);
+                compiled = (vertex, SpirvReflection.WithDescriptorSet(fragment, 1));
+                if (cache.Count >= MaxEntries)
+                    cache.Clear();
+                cache[glslKey] = compiled;
+                return compiled;
+            }
             var key = Convert.ToHexString(SHA256.HashData(variant.Vertex.Dxbc)) + Convert.ToHexString(SHA256.HashData(variant.Fragment.Dxbc));
             if (cache.TryGetValue(key, out var spirv))
                 return spirv;
@@ -243,19 +257,23 @@ namespace AssetStudio.Avalonia
             draw.SetLayouts = new DescriptorSetLayout[setCount];
             draw.Sets = new DescriptorSet[setCount];
 
-            //the parameters of a descriptor: by register (Direct3D), by the set and binding the register names (Vulkan)
-            bool Names(int register, Slot slot) => variant.IsVulkan
-                ? UnityShaderVariant.VulkanSlot(register) == (slot.Set, slot.Resource.Binding)
-                : register == slot.Resource.Register;
-            IEnumerable<UnityConstantBuffer> BuffersOf(Slot slot) => variant.IsVulkan ? stages.SelectMany(x => x.ConstantBuffers) : stages[slot.Stage].ConstantBuffers;
-            IEnumerable<UnityShaderTexture> TexturesOf(Slot slot) => variant.IsVulkan ? stages.SelectMany(x => x.Textures) : stages[slot.Stage].Textures;
+            //the parameters of a descriptor: by register (Direct3D), by the set and binding the register names (Vulkan), by
+            //the names in the module (OpenGL: the members of the uniform blocks, the samplers)
+            bool Names(int register, Slot slot) => variant.IsGlsl
+                || (variant.IsVulkan ? UnityShaderVariant.VulkanSlot(register) == (slot.Set, slot.Resource.Binding) : register == slot.Resource.Register);
+            IEnumerable<UnityConstantBuffer> BuffersOf(Slot slot) => variant.IsGlsl
+                ? new[] { new UnityConstantBuffer { Name = slot.Resource.Name, Register = -1, Size = slot.Resource.Size, Fields = slot.Resource.Fields } }
+                : variant.IsVulkan ? stages.SelectMany(x => x.ConstantBuffers) : stages[slot.Stage].ConstantBuffers;
+            IEnumerable<UnityShaderTexture> TexturesOf(Slot slot) => variant.IsGlsl
+                ? new[] { new UnityShaderTexture { Name = slot.Resource.Name, Register = -1, SamplerRegister = -1, Dimension = slot.Resource.ImageDimension switch { 2 => 3, 3 => 4, _ => 2 } } }
+                : variant.IsVulkan ? stages.SelectMany(x => x.Textures) : stages[slot.Stage].Textures;
+            static bool IsShadowMap(UnityShaderTexture x) => x.Name == "_MainLightShadowmapTexture" || x.Name == "_AdditionalLightsShadowmapTexture";
             Sampler SamplerOf(Slot slot, int register)
             {
-                var users = TexturesOf(slot).Where(x => variant.IsVulkan ? UnityShaderVariant.VulkanSlot(x.SamplerRegister) == UnityShaderVariant.VulkanSlot(register) : x.SamplerRegister == register).ToList();
-                //comparison samplers: declared so in the DXBC; the samplers of the shadow maps in Vulkan programs
-                var comparison = variant.IsVulkan
-                    ? users.Any(x => x.Name == "_MainLightShadowmapTexture" || x.Name == "_AdditionalLightsShadowmapTexture")
-                    : comparisonSamplers[slot.Stage].Contains(register);
+                var users = TexturesOf(slot).Where(x => variant.IsGlsl
+                    || (variant.IsVulkan ? UnityShaderVariant.VulkanSlot(x.SamplerRegister) == UnityShaderVariant.VulkanSlot(register) : x.SamplerRegister == register)).ToList();
+                //comparison samplers: declared so in the DXBC; the samplers of the shadow maps in Vulkan and OpenGL programs
+                var comparison = variant.IsVulkan || variant.IsGlsl ? users.Any(IsShadowMap) : comparisonSamplers[slot.Stage].Contains(register);
                 return SamplerFor(users, comparison);
             }
 
@@ -699,8 +717,9 @@ namespace AssetStudio.Avalonia
                 stages[1] = new PipelineShaderStageCreateInfo { SType = StructureType.PipelineShaderStageCreateInfo, Stage = ShaderStageFlags.FragmentBit, Module = fragment, PName = entry };
 
                 //vertex inputs: the input registers of the vertex program (SPIR-V location = register) from the mesh by semantic
-                //Direct3D: by the semantics of the input registers (location = register); Vulkan: by Unity's bind channels
-                var signature = variant.IsVulkan ? new List<DxbcSignature.Element>() : DxbcSignature.ReadInputs(variant.Vertex.Dxbc).Where(x => x.SystemValue == 0).ToList();
+                //Direct3D: by the semantics of the input registers (location = register); Vulkan: by Unity's bind channels;
+                //OpenGL: by the names of the inputs (in_POSITION0, in_TEXCOORD1...)
+                var signature = variant.IsVulkan || variant.IsGlsl ? new List<DxbcSignature.Element>() : DxbcSignature.ReadInputs(variant.Vertex.Dxbc).Where(x => x.SystemValue == 0).ToList();
                 var locations = vertexReflection.InputLocations.Distinct().ToList();
                 var attributes = stackalloc VertexInputAttributeDescription[Math.Max(1, locations.Count)];
                 var usesZero = false;
@@ -711,6 +730,12 @@ namespace AssetStudio.Avalonia
                     {
                         var input = variant.Vertex.Inputs.FirstOrDefault(x => x.Location == locations[i]);
                         attribute = variant.Vertex.Inputs.Any(x => x.Location == locations[i]) ? AttributeOfChannel(input.Channel) : null;
+                    }
+                    else if (variant.IsGlsl)
+                    {
+                        var match = vertexReflection.InputNames.TryGetValue(locations[i], out var inputName)
+                            ? System.Text.RegularExpressions.Regex.Match(inputName, @"^in_([A-Z]+)(\d*)$") : System.Text.RegularExpressions.Match.Empty;
+                        attribute = match.Success ? AttributeOf(match.Groups[1].Value, match.Groups[2].Value.Length > 0 ? int.Parse(match.Groups[2].Value) : 0) : null;
                     }
                     else
                     {

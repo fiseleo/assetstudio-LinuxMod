@@ -1,4 +1,4 @@
-using SpirV;
+﻿using SpirV;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -172,6 +172,195 @@ namespace AssetStudio
                 finally
                 {
                     freeCode(ref output);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// GLSL -> SPIR-V compiler (glslang C API): the OpenGL (ES) programs of Unity compiled for Vulkan with the relaxed
+    /// rules (the loose uniforms in a default uniform block), bindings and locations assigned, the stages linked.
+    /// </summary>
+    public static class Glslang
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Input
+        {
+            public int Language, Stage, Client, ClientVersion, TargetLanguage, TargetLanguageVersion;
+            public IntPtr Code;
+            public int DefaultVersion, DefaultProfile, ForceDefaultVersionAndProfile, ForwardCompatible, Messages;
+            public IntPtr Resource;
+            public IntPtr IncludeSystem, IncludeLocal, FreeIncludeResult, CallbacksContext;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int InitializeProcessFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr DefaultResourceFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr ShaderCreateFn(ref Input input);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void ShaderDeleteFn(IntPtr shader);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void ShaderSetOptionsFn(IntPtr shader, int options);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int ShaderStepFn(IntPtr shader, ref Input input);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr GetLogFn(IntPtr handle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr ProgramCreateFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void ProgramDeleteFn(IntPtr program);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void ProgramAddShaderFn(IntPtr program, IntPtr shader);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int ProgramLinkFn(IntPtr program, int messages);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int ProgramMapIoFn(IntPtr program);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void ProgramGenerateFn(IntPtr program, int stage);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate nuint ProgramSpirvSizeFn(IntPtr program);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void ProgramSpirvGetFn(IntPtr program, IntPtr words);
+
+        public const int StageVertex = 0, StageFragment = 4;
+        private const int SourceGlsl = 1, ClientVulkan = 1, TargetVulkan10 = 1 << 22, TargetSpv = 1, TargetSpv10 = 1 << 16;
+        private const int ProfileNone = 1 << 0, ProfileCore = 1 << 1, ProfileEs = 1 << 3;
+        private const int MessagesSpvRules = 1 << 3, MessagesVulkanRules = 1 << 4, MessagesSuppressWarnings = 1 << 1;
+        private const int OptionAutoMapBindings = 1 << 0, OptionAutoMapLocations = 1 << 1, OptionVulkanRulesRelaxed = 1 << 2;
+
+        private static readonly object compileLock = new object();
+        private static bool initialized;
+        private static InitializeProcessFn initializeProcess;
+        private static DefaultResourceFn defaultResource;
+        private static ShaderCreateFn shaderCreate;
+        private static ShaderDeleteFn shaderDelete;
+        private static ShaderSetOptionsFn shaderSetOptions;
+        private static ShaderStepFn shaderPreprocess, shaderParse;
+        private static GetLogFn shaderLog, programLog, programSpirvMessages;
+        private static ProgramCreateFn programCreate;
+        private static ProgramDeleteFn programDelete;
+        private static ProgramAddShaderFn programAddShader;
+        private static ProgramLinkFn programLink;
+        private static ProgramMapIoFn programMapIo;
+        private static ProgramGenerateFn programGenerate;
+        private static ProgramSpirvSizeFn programSpirvSize;
+        private static ProgramSpirvGetFn programSpirvGet;
+
+        public static bool IsAvailable
+        {
+            get
+            {
+                Initialize();
+                return programSpirvGet != null;
+            }
+        }
+
+        private static T Export<T>(IntPtr handle, string name) where T : Delegate
+        {
+            return NativeLibrary.TryGetExport(handle, name, out var p) ? Marshal.GetDelegateForFunctionPointer<T>(p) : null;
+        }
+
+        private static void Initialize()
+        {
+            lock (compileLock)
+            {
+                if (initialized)
+                    return;
+                initialized = true;
+                foreach (var candidate in Vkd3dShader.Candidates("glslang", "16"))
+                {
+                    if (!NativeLibrary.TryLoad(candidate, out var handle))
+                        continue;
+                    initializeProcess = Export<InitializeProcessFn>(handle, "glslang_initialize_process");
+                    defaultResource = Export<DefaultResourceFn>(handle, "glslang_default_resource");
+                    shaderCreate = Export<ShaderCreateFn>(handle, "glslang_shader_create");
+                    shaderDelete = Export<ShaderDeleteFn>(handle, "glslang_shader_delete");
+                    shaderSetOptions = Export<ShaderSetOptionsFn>(handle, "glslang_shader_set_options");
+                    shaderPreprocess = Export<ShaderStepFn>(handle, "glslang_shader_preprocess");
+                    shaderParse = Export<ShaderStepFn>(handle, "glslang_shader_parse");
+                    shaderLog = Export<GetLogFn>(handle, "glslang_shader_get_info_log");
+                    programCreate = Export<ProgramCreateFn>(handle, "glslang_program_create");
+                    programDelete = Export<ProgramDeleteFn>(handle, "glslang_program_delete");
+                    programAddShader = Export<ProgramAddShaderFn>(handle, "glslang_program_add_shader");
+                    programLink = Export<ProgramLinkFn>(handle, "glslang_program_link");
+                    programMapIo = Export<ProgramMapIoFn>(handle, "glslang_program_map_io");
+                    programGenerate = Export<ProgramGenerateFn>(handle, "glslang_program_SPIRV_generate");
+                    programSpirvSize = Export<ProgramSpirvSizeFn>(handle, "glslang_program_SPIRV_get_size");
+                    programSpirvGet = Export<ProgramSpirvGetFn>(handle, "glslang_program_SPIRV_get");
+                    programLog = Export<GetLogFn>(handle, "glslang_program_get_info_log");
+                    programSpirvMessages = Export<GetLogFn>(handle, "glslang_program_SPIRV_get_messages");
+                    if (initializeProcess != null && defaultResource != null && shaderCreate != null && shaderDelete != null && shaderSetOptions != null
+                        && shaderPreprocess != null && shaderParse != null && shaderLog != null && programCreate != null && programDelete != null
+                        && programAddShader != null && programLink != null && programMapIo != null && programGenerate != null && programSpirvSize != null
+                        && programSpirvGet != null && programLog != null && initializeProcess() != 0)
+                    {
+                        Logger.Verbose($"Loaded glslang from {candidate}");
+                        return;
+                    }
+                    programSpirvGet = null;
+                    NativeLibrary.Free(handle);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Compiles the vertex and fragment GLSL of a program (each with its #version) to linked SPIR-V modules; the
+        /// errors are thrown with glslang's log.
+        /// </summary>
+        public static (byte[] Vertex, byte[] Fragment) Compile(string vertexSource, string fragmentSource)
+        {
+            Initialize();
+            if (programSpirvGet == null)
+                throw new DllNotFoundException("glslang library not found");
+            lock (compileLock)
+            {
+                var shaders = new List<IntPtr>();
+                var sources = new List<IntPtr>();
+                var program = programCreate();
+                try
+                {
+                    foreach (var (stage, source) in new[] { (StageVertex, vertexSource), (StageFragment, fragmentSource) })
+                    {
+                        var code = Marshal.StringToCoTaskMemUTF8(source);
+                        sources.Add(code);
+                        var es = source.Contains(" es", StringComparison.Ordinal);
+                        var input = new Input
+                        {
+                            Language = SourceGlsl,
+                            Stage = stage,
+                            Client = ClientVulkan,
+                            ClientVersion = TargetVulkan10,
+                            TargetLanguage = TargetSpv,
+                            TargetLanguageVersion = TargetSpv10,
+                            Code = code,
+                            DefaultVersion = es ? 310 : 450,
+                            DefaultProfile = es ? ProfileEs : ProfileCore,
+                            Messages = MessagesSpvRules | MessagesVulkanRules | MessagesSuppressWarnings,
+                            Resource = defaultResource(),
+                        };
+                        var shader = shaderCreate(ref input);
+                        if (shader == IntPtr.Zero)
+                            throw new Exception("glslang_shader_create failed");
+                        shaders.Add(shader);
+                        shaderSetOptions(shader, OptionAutoMapBindings | OptionAutoMapLocations | OptionVulkanRulesRelaxed);
+                        if (shaderPreprocess(shader, ref input) == 0 || shaderParse(shader, ref input) == 0)
+                            throw new Exception($"{(stage == StageVertex ? "vertex" : "fragment")} program: {Marshal.PtrToStringUTF8(shaderLog(shader))}".TrimEnd());
+                        programAddShader(program, shader);
+                    }
+                    if (programLink(program, MessagesSpvRules | MessagesVulkanRules) == 0 || programMapIo(program) == 0)
+                        throw new Exception($"link: {Marshal.PtrToStringUTF8(programLog(program))}".TrimEnd());
+                    byte[] Generate(int stage)
+                    {
+                        programGenerate(program, stage);
+                        var size = (int)programSpirvSize(program);
+                        var words = new byte[size * 4];
+                        var handle = GCHandle.Alloc(words, GCHandleType.Pinned);
+                        try
+                        {
+                            programSpirvGet(program, handle.AddrOfPinnedObject());
+                        }
+                        finally
+                        {
+                            handle.Free();
+                        }
+                        return words;
+                    }
+                    return (Generate(StageVertex), Generate(StageFragment));
+                }
+                finally
+                {
+                    programDelete(program);
+                    foreach (var shader in shaders)
+                        shaderDelete(shader);
+                    foreach (var code in sources)
+                        Marshal.FreeCoTaskMem(code);
                 }
             }
         }

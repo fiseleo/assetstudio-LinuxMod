@@ -6,6 +6,101 @@ using Vec4 = System.Numerics.Vector4;
 
 namespace AssetStudio.Tests
 {
+    public class GlslProgramTests
+    {
+        //a program as Unity's GLES3 programs are: both stages, uniform blocks and loose uniforms, HLSLcc's matrices
+        private const string Program = @"#ifdef VERTEX
+#version 300 es
+
+#define HLSLCC_ENABLE_UNIFORM_BUFFERS 1
+#define UNITY_SUPPORTS_UNIFORM_LOCATION 1
+#if UNITY_SUPPORTS_UNIFORM_LOCATION
+#define UNITY_LOCATION(x) layout(location = x)
+#define UNITY_BINDING(x) layout(binding = x, std140)
+#else
+#define UNITY_LOCATION(x)
+#define UNITY_BINDING(x) layout(std140)
+#endif
+uniform vec4 hlslcc_mtx4x4unity_MatrixVP[4];
+UNITY_BINDING(1) uniform UnityPerDraw {
+    vec4 hlslcc_mtx4x4unity_ObjectToWorld[4];
+    vec4 unity_LightIndices[2];
+};
+in highp vec4 in_POSITION0;
+in highp vec2 in_TEXCOORD0;
+out highp vec2 vs_TEXCOORD0;
+void main()
+{
+    vec4 world = hlslcc_mtx4x4unity_ObjectToWorld[0] * in_POSITION0.x + hlslcc_mtx4x4unity_ObjectToWorld[3] + unity_LightIndices[1];
+    gl_Position = hlslcc_mtx4x4unity_MatrixVP[1] * world.y + hlslcc_mtx4x4unity_MatrixVP[3];
+    vs_TEXCOORD0 = in_TEXCOORD0;
+}
+#endif
+#ifdef FRAGMENT
+#version 300 es
+#define UNITY_SUPPORTS_UNIFORM_LOCATION 1
+#if UNITY_SUPPORTS_UNIFORM_LOCATION
+#define UNITY_LOCATION(x) layout(location = x)
+#else
+#define UNITY_LOCATION(x)
+#endif
+precision highp float;
+uniform mediump vec4 _Color;
+UNITY_LOCATION(0) uniform mediump sampler2D _MainTex;
+in highp vec2 vs_TEXCOORD0;
+layout(location = 0) out mediump vec4 SV_Target0;
+void main()
+{
+    SV_Target0 = texture(_MainTex, vs_TEXCOORD0) * _Color;
+}
+#endif
+";
+
+        [Fact]
+        public void Stages_AreSplitForVulkan()
+        {
+            var vertex = UnityGlsl.Stage(Program, "VERTEX");
+            var fragment = UnityGlsl.Stage(Program, "FRAGMENT");
+            Assert.StartsWith("#version 310 es\n", vertex);
+            Assert.Contains("#define UNITY_SUPPORTS_UNIFORM_LOCATION 0", vertex);
+            Assert.DoesNotContain("SV_Target0", vertex);
+            Assert.Contains("SV_Target0", fragment);
+            Assert.Null(UnityGlsl.Stage("#ifdef VERTEX\n#version 100\nattribute vec4 p;\n#endif\n", "VERTEX"));
+            Assert.Null(UnityGlsl.Stage(Program, "GEOMETRY"));
+        }
+
+        [SkippableFact]
+        public void Compiled_TheModulesNameTheirParameters()
+        {
+            Skip.IfNot(Glslang.IsAvailable, "glslang not available");
+            var (vertex, fragment) = Glslang.Compile(UnityGlsl.Stage(Program, "VERTEX"), UnityGlsl.Stage(Program, "FRAGMENT"));
+            var vs = SpirvReflection.Read(vertex);
+            var fs = SpirvReflection.Read(fragment);
+            //the inputs by name
+            Assert.Equal(new[] { "in_POSITION0", "in_TEXCOORD0" }, vs.InputNames.OrderBy(x => x.Key).Select(x => x.Value).ToArray());
+            //the loose uniforms in the default uniform block, HLSLcc's vec4[4] as a matrix
+            var fields = vs.Resources.Where(x => x.Kind == SpirvReflection.ResourceKind.UniformBuffer).SelectMany(x => x.Fields).ToList();
+            var matrix = fields.Single(x => x.Name == "unity_MatrixVP");
+            Assert.True(matrix.IsMatrix);
+            Assert.Equal(0, matrix.ArraySize);
+            Assert.True(fields.Single(x => x.Name == "unity_ObjectToWorld").IsMatrix);
+            var indices = fields.Single(x => x.Name == "unity_LightIndices");
+            Assert.Equal(2, indices.ArraySize);
+            Assert.Equal(64, indices.Offset);
+            Assert.Contains(fs.Resources, x => x.Kind == SpirvReflection.ResourceKind.CombinedImageSampler && x.Name == "_MainTex");
+            Assert.Contains(fs.Resources.SelectMany(x => x.Fields), x => x.Name == "_Color" && x.Components == 4);
+        }
+
+        [SkippableFact]
+        public void CompileErrors_AreThrownWithTheLog()
+        {
+            Skip.IfNot(Glslang.IsAvailable, "glslang not available");
+            var broken = UnityGlsl.Stage(Program, "FRAGMENT").Replace("texture(_MainTex", "texture(_Missing");
+            var e = Assert.ThrowsAny<Exception>(() => Glslang.Compile(UnityGlsl.Stage(Program, "VERTEX"), broken));
+            Assert.Contains("_Missing", e.Message);
+        }
+    }
+
     public class VulkanProgramTests
     {
         //a program entry of a Vulkan blob of Unity 2021.3 (Legacy Shaders/Diffuse, DIRECTIONAL): SMOL-V encoding version 1
