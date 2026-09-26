@@ -1586,6 +1586,9 @@ namespace AssetStudio.Avalonia.Views
                         await PreviewVideo(assetItem, () => m_VideoClip.m_ExternalResources.m_Size > 0 ? m_VideoClip.m_VideoData.GetData() : null,
                             string.IsNullOrEmpty(Path.GetExtension(m_VideoClip.m_OriginalPath)) ? ".mp4" : Path.GetExtension(m_VideoClip.m_OriginalPath));
                         break;
+                    case Material m_Material when ShaderPreview.IsAvailable && m_Material.m_Shader.TryGet(out _):
+                        await PreviewMaterial(assetItem, m_Material);
+                        break;
                     case MovieTexture m_MovieTexture:
                         await PreviewVideo(assetItem, () => m_MovieTexture.m_MovieData, ".ogv");
                         break;
@@ -2269,6 +2272,60 @@ namespace AssetStudio.Avalonia.Views
             ShowMesh(assetItem, renderer);
         }
 
+        /// <summary>A material on a sphere drawn with its shader; the property dump when the shader can't be used.</summary>
+        private async Task PreviewMaterial(AssetItem assetItem, Material material)
+        {
+            StatusStripUpdate("Compiling the material's shader...");
+            MeshRenderer sphere = null;
+            var preview = await Task.Run(() => ShaderPreview.FromMaterial(material, out sphere));
+            if (assetItem != lastSelectedItem)
+            {
+                sphere.Dispose();
+                return;
+            }
+            if (!preview.IsUsable)
+            {
+                sphere.Dispose();
+                await PreviewTextAsync(assetItem, () => $"// {preview.Summary}\n\n{assetItem.Asset.Dump()}");
+                return;
+            }
+            sphere.UseShaders = true;
+            assetItem.InfoText = preview.Summary;
+            ShowMesh(assetItem, sphere);
+        }
+
+        private void GameShaders_Click(object sender, RoutedEventArgs e)
+        {
+            var renderer = meshRenderer;
+            if (renderer == null)
+                return;
+            Settings.Default.gameShaders = gameShadersCheckBox.IsChecked == true;
+            Settings.Default.Save();
+            ApplyGameShaders(renderer);
+            ScheduleMeshRender();
+        }
+
+        /// <summary>Builds the shader preview of a model when asked for, and switches between it and the plain preview.</summary>
+        private void ApplyGameShaders(MeshRenderer renderer)
+        {
+            var wanted = gameShadersCheckBox.IsChecked == true;
+            if (wanted && renderer.ShaderPreview == null && renderer.Model != null)
+            {
+                renderer.ShaderPreview = ShaderPreview.FromModel(renderer.Model);
+            }
+            renderer.UseShaders = wanted;
+            var summary = renderer.ShaderPreview?.Summary;
+            if (lastSelectedItem != null && renderer.Model != null)
+            {
+                var info = lastSelectedItem.InfoText ?? "";
+                var marker = info.IndexOf("\n\nShaders:", StringComparison.Ordinal);
+                if (marker >= 0)
+                    info = info[..marker];
+                lastSelectedItem.InfoText = wanted && summary != null ? $"{info}\n\nShaders:\n{summary}" : info;
+                ShowInfo(lastSelectedItem);
+            }
+        }
+
         private void ShowMesh(AssetItem assetItem, MeshRenderer renderer)
         {
             if (meshRenderer != renderer)
@@ -2277,6 +2334,7 @@ namespace AssetStudio.Avalonia.Views
             meshPreviewHost.IsVisible = true;
             ShowInfo(assetItem);
             SetupAnimationBar(renderer);
+            SetupGameShaders(renderer);
             ScheduleMeshRender();
             meshPreviewHost.Focus();
             StatusStripUpdate($"{renderer.BackendName} | Left drag = rotate | Right drag = move | Wheel = zoom | Ctrl+W = wireframe");
@@ -2645,6 +2703,25 @@ namespace AssetStudio.Avalonia.Views
         }
 
         #endregion
+
+        private void SetupGameShaders(MeshRenderer renderer)
+        {
+            //models (their materials) and materials; needs Vulkan and vkd3d-shader
+            var possible = ShaderPreview.IsAvailable && (renderer.Model != null || renderer.ShaderPreview != null);
+            gameShadersCheckBox.IsVisible = possible;
+            if (!possible)
+                return;
+            gameShadersCheckBox.IsChecked = renderer.ShaderPreview != null && renderer.Model == null ? true : Settings.Default.gameShaders;
+            if (!animationBar.IsVisible)
+            {
+                //a model without animations, or a material: the bar only has the switch
+                clipComboBox.IsVisible = animationPlayButton.IsVisible = animationSlider.IsVisible = animationTimeLabel.IsVisible = skeletonCheckBox.IsVisible = false;
+                blendShapeButton.IsVisible = renderer.BlendShapes != null;
+                animationBar.IsVisible = true;
+            }
+            if (renderer.Model != null)
+                ApplyGameShaders(renderer);
+        }
 
         #region Blend shapes
 

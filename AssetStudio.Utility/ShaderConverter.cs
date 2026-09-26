@@ -41,6 +41,38 @@ namespace AssetStudio
             return header + Encoding.UTF8.GetString(shader.m_Script);
         }
 
+        /// <summary>The programs of one platform of a shader (5.5 and up): its blob decompressed and read.</summary>
+        public static ShaderProgram ReadShaderProgram(Shader shader, int platformIndex)
+        {
+            ShaderProgram program = null;
+            for (var j = 0; j < shader.offsets[platformIndex].Length; j++)
+            {
+                var offset = shader.offsets[platformIndex][j];
+                var compressedLength = shader.compressedLengths[platformIndex][j];
+                var decompressedLength = shader.decompressedLengths[platformIndex][j];
+                var decompressedBytes = new byte[decompressedLength];
+                if (shader.assetsFile.game.Type.IsGISubGroup())
+                {
+                    Buffer.BlockCopy(shader.compressedBlob, (int)offset, decompressedBytes, 0, (int)decompressedLength);
+                }
+                else
+                {
+                    var numWrite = LZ4.Instance.Decompress(shader.compressedBlob.AsSpan().Slice((int)offset, (int)compressedLength), decompressedBytes.AsSpan().Slice(0, (int)decompressedLength));
+                    if (numWrite != decompressedLength)
+                    {
+                        throw new IOException($"Lz4 decompression error, write {numWrite} bytes but expected {decompressedLength} bytes");
+                    }
+                }
+                using var blobReader = new EndianBinaryReader(new MemoryStream(decompressedBytes), EndianType.LittleEndian);
+                if (j == 0)
+                {
+                    program = new ShaderProgram(blobReader, shader);
+                }
+                program.Read(blobReader, j);
+            }
+            return program;
+        }
+
         private static string ConvertSerializedShader(Shader shader)
         {
             var length = shader.platforms.Length;
@@ -935,6 +967,33 @@ namespace AssetStudio
 
     public class ShaderProgram
     {
+        private readonly Dictionary<uint, BlobProgramParameters> parameterEntries = new Dictionary<uint, BlobProgramParameters>();
+        private readonly List<byte[]> segments = new List<byte[]>();
+
+        /// <summary>A parameter entry (2021.3.10 and up: m_ParameterBlobIndices), null when unreadable.</summary>
+        public BlobProgramParameters GetParameterEntry(uint index)
+        {
+            if (parameterEntries.TryGetValue(index, out var parameters))
+                return parameters;
+            parameters = null;
+            if (index < entries.Length && entries[index].Segment < segments.Count)
+            {
+                var entry = entries[index];
+                try
+                {
+                    using var reader = new EndianBinaryReader(new MemoryStream(segments[entry.Segment]), EndianType.LittleEndian);
+                    reader.BaseStream.Position = entry.Offset;
+                    parameters = BlobProgramParameters.ReadParameterEntry(reader, entry.Offset + entry.Length);
+                }
+                catch (Exception e) when (e is EndOfStreamException || e is InvalidDataException || e is ArgumentOutOfRangeException)
+                {
+                    parameters = null;
+                }
+            }
+            parameterEntries[index] = parameters;
+            return parameters;
+        }
+
         public ShaderSubProgramEntry[] entries;
         public ShaderSubProgram[] m_SubPrograms;
 
@@ -957,6 +1016,12 @@ namespace AssetStudio
 
         public void Read(EndianBinaryReader reader, int segment)
         {
+            if (reader.BaseStream is MemoryStream memory)
+            {
+                while (segments.Count <= segment)
+                    segments.Add(null);
+                segments[segment] = memory.ToArray();
+            }
             for (int i = 0; i < entries.Length; i++)
             {
                 var entry = entries[i];
@@ -965,9 +1030,9 @@ namespace AssetStudio
                     reader.BaseStream.Position = entry.Offset;
                     try
                     {
-                        m_SubPrograms[i] = new ShaderSubProgram(reader, hasUpdatedGpuProgram);
+                        m_SubPrograms[i] = new ShaderSubProgram(reader, hasUpdatedGpuProgram, entry.Offset + entry.Length);
                     }
-                    catch (Exception e) when (e is EndOfStreamException || e is ArgumentOutOfRangeException || e is OverflowException || e is OutOfMemoryException)
+                    catch (Exception e) when (e is EndOfStreamException || e is ArgumentOutOfRangeException || e is OverflowException || e is OutOfMemoryException || e is InvalidDataException)
                     {
                         // 2021.3.10+ blobs also hold parameter entries (see m_ParameterBlobIndices), which are not programs
                         Logger.Verbose($"Shader blob entry {i} is not a program: {e.Message}");
@@ -988,6 +1053,159 @@ namespace AssetStudio
         }
     }
 
+    /// <summary>
+    /// The parameters of a program as the blob stores them after its byte code (Unity 5.5 and up): the vertex bind channels,
+    /// groups of values (the first one outside any constant buffer, then one per constant buffer) and the resource bindings
+    /// (textures, constant buffers, buffers, UAVs, samplers).
+    /// </summary>
+    public sealed class BlobProgramParameters
+    {
+        public List<(uint source, uint target)> BindChannels = new List<(uint, uint)>();
+        public List<UnityShaderField> Globals = new List<UnityShaderField>();
+        public List<UnityConstantBuffer> ConstantBuffers = new List<UnityConstantBuffer>();
+        public List<UnityShaderTexture> Textures = new List<UnityShaderTexture>();
+        public List<(uint sampler, int index)> Samplers = new List<(uint, int)>();
+        public List<(string name, int register)> ConstantBufferBindings = new List<(string, int)>();
+
+        /// <summary>A parameter entry of the blob (2021.3.10 and up): a hash, then the groups and the resources.</summary>
+        public static BlobProgramParameters ReadParameterEntry(EndianBinaryReader reader, long end)
+        {
+            reader.ReadUInt32(); //hash
+            return Read(reader, 202012090, end, false);
+        }
+
+        public static BlobProgramParameters Read(EndianBinaryReader reader, int programVersion, long end = -1, bool bindChannels = true)
+        {
+            if (programVersion < 201608170) //5.5
+                return null;
+            var hasStructs = programVersion >= 201708220; //2017.3
+            var hasTextureExtra = programVersion >= 201708220;
+            var newTextureParams = programVersion >= 201802150; //2018.2
+            var result = new BlobProgramParameters();
+            if (end < 0 || end > reader.BaseStream.Length)
+                end = reader.BaseStream.Length;
+            int Count()
+            {
+                var count = reader.ReadInt32();
+                if (count < 0 || count > (end - reader.BaseStream.Position) / 4)
+                    throw new InvalidDataException("not a parameter list");
+                return count;
+            }
+            string ReadString()
+            {
+                var length = reader.ReadInt32();
+                if (length < 0 || length > end - reader.BaseStream.Position)
+                    throw new InvalidDataException("not a parameter name");
+                var text = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(length));
+                reader.AlignStream();
+                return text;
+            }
+            UnityShaderField Field()
+            {
+                var name = ReadString();
+                var type = reader.ReadInt32();
+                var rows = reader.ReadInt32();
+                var columns = reader.ReadInt32();
+                var isMatrix = reader.ReadInt32() > 0;
+                var arraySize = reader.ReadInt32();
+                var index = reader.ReadInt32();
+                return new UnityShaderField { Name = name, Offset = index, ArraySize = arraySize, IsMatrix = isMatrix, Components = isMatrix ? rows : columns };
+            }
+
+            if (bindChannels)
+            {
+                var sourceMap = reader.ReadUInt32();
+                var bindCount = Count();
+                for (int i = 0; i < bindCount; i++)
+                    result.BindChannels.Add((reader.ReadUInt32(), reader.ReadUInt32()));
+            }
+
+            var groupCount = Count();
+            for (int g = 0; g < groupCount; g++)
+            {
+                var name = ReadString();
+                var usedSize = reader.ReadInt32();
+                var fields = new List<UnityShaderField>();
+                var paramCount = Count();
+                for (int i = 0; i < paramCount; i++)
+                    fields.Add(Field());
+                if (hasStructs)
+                {
+                    var structCount = Count();
+                    for (int i = 0; i < structCount; i++)
+                    {
+                        var structName = ReadString();
+                        var structIndex = reader.ReadInt32();
+                        var structArraySize = reader.ReadInt32();
+                        var structSize = reader.ReadInt32();
+                        var structParamCount = Count();
+                        for (int k = 0; k < structParamCount; k++)
+                        {
+                            //members of an array of structs: element 0 only
+                            var member = Field();
+                            member.Name = $"{structName}.{member.Name}";
+                            member.Offset += structIndex;
+                            fields.Add(member);
+                        }
+                    }
+                }
+                if (g == 0 && string.IsNullOrEmpty(name))
+                    result.Globals.AddRange(fields);
+                else
+                    result.ConstantBuffers.Add(new UnityConstantBuffer { Name = name, Size = usedSize, Register = -1, Fields = fields });
+            }
+
+            var resourceCount = Count();
+            for (int i = 0; i < resourceCount; i++)
+            {
+                var name = ReadString();
+                var type = reader.ReadInt32();
+                var index = reader.ReadInt32();
+                var extra = reader.ReadInt32();
+                switch (type)
+                {
+                    case 0: //texture
+                        {
+                            int dimension, samplerIndex;
+                            if (newTextureParams)
+                            {
+                                var textureExtra = reader.ReadUInt32();
+                                dimension = (int)(textureExtra >> 1);
+                                samplerIndex = extra;
+                            }
+                            else
+                            {
+                                if (hasTextureExtra)
+                                    reader.ReadUInt32(); //multi sampled
+                                dimension = extra & 0xFF;
+                                samplerIndex = extra >> 8;
+                                if (samplerIndex == 0xFFFFFF)
+                                    samplerIndex = -1;
+                            }
+                            result.Textures.Add(new UnityShaderTexture { Name = name, Register = index, SamplerRegister = samplerIndex, Dimension = dimension });
+                            break;
+                        }
+                    case 1: //constant buffer binding
+                        result.ConstantBufferBindings.Add((name, index));
+                        foreach (var cb in result.ConstantBuffers.Where(x => x.Name == name && x.Register < 0).Take(1))
+                            cb.Register = index;
+                        break;
+                    case 4: //sampler
+                        result.Samplers.Add(((uint)extra, index));
+                        break;
+                    case 2: //buffer
+                    case 3: //UAV
+                        break;
+                    default:
+                        throw new InvalidDataException($"parameter type {type}");
+                }
+            }
+            if (reader.BaseStream.Position > end)
+                throw new InvalidDataException("past the end");
+            return result;
+        }
+    }
+
     public class ShaderSubProgram
     {
         private int m_Version;
@@ -996,7 +1214,7 @@ namespace AssetStudio
         public string[] m_LocalKeywords;
         public byte[] m_ProgramCode;
 
-        public ShaderSubProgram(EndianBinaryReader reader, bool hasUpdatedGpuProgram)
+        public ShaderSubProgram(EndianBinaryReader reader, bool hasUpdatedGpuProgram, long end = -1)
         {
             //LoadGpuProgramFromData
             //201509030 - Unity 5.3
@@ -1008,6 +1226,10 @@ namespace AssetStudio
             //201806140 - Unity 2019.1~2021.1
             //202012090 - Unity 2021.2
             m_Version = reader.ReadInt32();
+            //the blobs also hold parameter entries (2021.3.10 and up): they don't start with a program version
+            if (m_Version < 201509030 || m_Version > 203012310)
+                throw new InvalidDataException($"not a program (version {m_Version})");
+            var limit = end >= 0 ? end : reader.BaseStream.Length;
             if (hasUpdatedGpuProgram && m_Version > 201806140)
             {
                 m_Version = 201806140;
@@ -1019,6 +1241,8 @@ namespace AssetStudio
                 reader.BaseStream.Position += 4;
             }
             var m_KeywordsSize = reader.ReadInt32();
+            if (m_KeywordsSize < 0 || m_KeywordsSize > (limit - reader.BaseStream.Position) / 4)
+                throw new InvalidDataException("not a program (keywords)");
             m_Keywords = new string[m_KeywordsSize];
             for (int i = 0; i < m_KeywordsSize; i++)
             {
@@ -1027,17 +1251,34 @@ namespace AssetStudio
             if (m_Version >= 201806140 && m_Version < 202012090)
             {
                 var m_LocalKeywordsSize = reader.ReadInt32();
+                if (m_LocalKeywordsSize < 0 || m_LocalKeywordsSize > (limit - reader.BaseStream.Position) / 4)
+                    throw new InvalidDataException("not a program (local keywords)");
                 m_LocalKeywords = new string[m_LocalKeywordsSize];
                 for (int i = 0; i < m_LocalKeywordsSize; i++)
                 {
                     m_LocalKeywords[i] = reader.ReadAlignedString();
                 }
             }
-            m_ProgramCode = reader.ReadUInt8Array();
+            var codeLength = reader.ReadInt32();
+            if (codeLength < 0 || codeLength > limit - reader.BaseStream.Position)
+                throw new InvalidDataException("not a program (code)");
+            m_ProgramCode = reader.ReadBytes(codeLength);
             reader.AlignStream();
 
-            //TODO
+            try
+            {
+                Parameters = BlobProgramParameters.Read(reader, m_Version, end);
+                if (end >= 0 && reader.BaseStream.Position > end)
+                    Parameters = null;
+            }
+            catch (Exception e) when (e is EndOfStreamException || e is ArgumentOutOfRangeException || e is OverflowException || e is OutOfMemoryException || e is InvalidDataException)
+            {
+                Parameters = null;
+            }
         }
+
+        /// <summary>The parameters stored after the byte code (bind channels, constant buffers, resources), null when unreadable.</summary>
+        public BlobProgramParameters Parameters { get; private set; }
 
         public string Export()
         {

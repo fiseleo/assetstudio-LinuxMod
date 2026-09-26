@@ -43,6 +43,17 @@ namespace AssetStudio.Avalonia
         public int TriangleCount => indices.Length / 3;
         public int TextureCount => textures.Length;
 
+        /// <summary>Draws with the game's shaders instead (see <see cref="UseShaders"/>); null when not built.</summary>
+        public ShaderPreview ShaderPreview { get; set; }
+        /// <summary>Render with <see cref="ShaderPreview"/> when it can.</summary>
+        public bool UseShaders { get; set; }
+        internal Vector3[] PosedVertices => vertices;
+        internal Vector3[] PosedNormals => normals;
+        internal (Vector3 center, float radius) Bounds => (center, radius);
+        internal bool VerticesChangedForShaders;
+        /// <summary>The converted model of a model preview (its materials), null for a mesh.</summary>
+        public ModelConverter Model { get; private set; }
+
         /// <summary>Poses the model (skinning, animations); null for a single mesh.</summary>
         public ModelAnimator Animator { get; private set; }
         public int Clip { get; private set; } = -1;
@@ -86,6 +97,7 @@ namespace AssetStudio.Avalonia
                 }
             }
             gpuVerticesChanged = true;
+            VerticesChangedForShaders = true;
         }
 
         /// <summary>Places the vertices for a clip of <see cref="Animator"/> at a time (clip -1: rest pose).</summary>
@@ -97,6 +109,7 @@ namespace AssetStudio.Avalonia
             Time = time;
             Animator.Pose(clip, time, vertices, normals);
             gpuVerticesChanged = true;
+            VerticesChangedForShaders = true;
         }
 
         /// <summary>The bones of the current pose as lines in pixels of a render of this size.</summary>
@@ -253,7 +266,7 @@ namespace AssetStudio.Avalonia
                 animator = new ModelAnimator(model, verts, hasNormals ? norms : null);
                 animator.Pose(-1, 0, verts, hasNormals ? norms : null);
             }
-            return new MeshRenderer(verts, hasNormals ? norms : null, indices.ToArray(), uvs, ranges.ToArray(), textures.ToArray()) { Animator = animator };
+            return new MeshRenderer(verts, hasNormals ? norms : null, indices.ToArray(), uvs, ranges.ToArray(), textures.ToArray()) { Animator = animator, Model = model };
         }
 
         private static (int, Vector2, Vector2) FindMainTexture(ModelConverter model, string materialName,
@@ -298,6 +311,12 @@ namespace AssetStudio.Avalonia
         public byte[] Render(int width, int height)
         {
             var gpu = VulkanMeshRenderer.Instance;
+            if (gpu != null && UseShaders && ShaderPreview?.IsUsable == true && WireframeMode == 0)
+            {
+                var shaded = ShaderPreview.Render(gpu, this, width, height);
+                if (shaded != null)
+                    return shaded;
+            }
             if (gpu != null)
             {
                 try
@@ -337,6 +356,8 @@ namespace AssetStudio.Avalonia
 
         public void Dispose()
         {
+            ShaderPreview?.Dispose();
+            ShaderPreview = null;
             gpuMesh?.Dispose();
             gpuMesh = null;
         }

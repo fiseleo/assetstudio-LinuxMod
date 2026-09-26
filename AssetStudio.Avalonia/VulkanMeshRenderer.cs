@@ -1,4 +1,4 @@
-using Silk.NET.Core.Native;
+﻿using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using System;
 using System.Collections.Generic;
@@ -43,7 +43,7 @@ namespace AssetStudio.Avalonia
     /// UI thread. <see cref="Instance"/> is null when no Vulkan device is usable (the software renderer is used
     /// then); set ASSETSTUDIO_RENDERER=software to force that.
     /// </summary>
-    public sealed unsafe class VulkanMeshRenderer : IDisposable
+    public sealed unsafe partial class VulkanMeshRenderer : IDisposable
     {
         private const Format ColorFormat = Format.B8G8R8A8Unorm;
         private const int PushConstantSize = 128;
@@ -1139,6 +1139,7 @@ namespace AssetStudio.Avalonia
             {
                 vk.DeviceWaitIdle(device);
                 DestroyTarget();
+                DestroyShadedResources();
                 foreach (var pipeline in new[] { fillPipeline, wireOverlayPipeline, wireOnlyPipeline, backgroundPipeline })
                 {
                     if (pipeline.Handle != 0)

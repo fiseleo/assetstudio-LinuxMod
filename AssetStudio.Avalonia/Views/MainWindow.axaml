@@ -255,7 +255,7 @@
                           PointerPressed="AnimationBar_PointerPressed">
                     <!-- dark controls on the dark bar whatever the theme -->
                     <ThemeVariantScope RequestedThemeVariant="Dark">
-                    <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" >
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" >
                       <ComboBox x:Name="clipComboBox" Grid.Column="0" MinWidth="160" MaxWidth="320" SelectionChanged="Clip_SelectionChanged" />
                       <Button x:Name="animationPlayButton" Grid.Column="1" Content="Play" Margin="6,0" MinWidth="64" Click="AnimationPlay_Click" />
                       <Slider x:Name="animationSlider" Grid.Column="2" Minimum="0" Maximum="1" VerticalAlignment="Center" Margin="4,0"
@@ -263,6 +263,8 @@
                       <TextBlock x:Name="animationTimeLabel" Grid.Column="3" VerticalAlignment="Center" MinWidth="90" Margin="6,0" />
                       <CheckBox x:Name="skeletonCheckBox" Grid.Column="4" Content="Skeleton" Click="Skeleton_Click" />
                       <ToggleButton x:Name="blendShapeButton" Grid.Column="5" Content="Blend shapes" Margin="6,0,0,0" Click="BlendShapeButton_Click" />
+                      <CheckBox x:Name="gameShadersCheckBox" Grid.Column="6" Content="Game shaders" Margin="8,0,0,0" Click="GameShaders_Click"
+                                ToolTip.Tip="Draw with the game's own shaders (Direct3D 11 programs translated for Vulkan)" />
                     </Grid>
                     </ThemeVariantScope>
                   </Border>

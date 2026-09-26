@@ -11,6 +11,8 @@ namespace AssetStudio
         public ImportedFrame RootFrame { get; protected set; }
         public List<ImportedMesh> MeshList { get; protected set; } = new List<ImportedMesh>();
         public List<ImportedMaterial> MaterialList { get; protected set; } = new List<ImportedMaterial>();
+        /// <summary>The Unity material of each imported material, by name (the previews draw them with their shaders).</summary>
+        public Dictionary<string, Material> SourceMaterials { get; } = new Dictionary<string, Material>();
         public List<ImportedTexture> TextureList { get; protected set; } = new List<ImportedTexture>();
         public List<ImportedKeyframedAnimation> AnimationList { get; protected set; } = new List<ImportedKeyframedAnimation>();
         public List<ImportedMorph> MorphList { get; protected set; } = new List<ImportedMorph>();
@@ -660,6 +662,7 @@ namespace AssetStudio
                 }
                 iMat = new ImportedMaterial();
                 iMat.Name = mat.m_Name;
+                SourceMaterials[mat.m_Name] = mat;
                 //default values
                 iMat.Diffuse = new Color(0.8f, 0.8f, 0.8f, 1);
                 iMat.Ambient = new Color(0.2f, 0.2f, 0.2f, 1);
