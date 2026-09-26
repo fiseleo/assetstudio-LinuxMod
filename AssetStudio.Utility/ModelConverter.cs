@@ -673,6 +673,7 @@ namespace AssetStudio
                 iMat.Transparency = 0f;
                 foreach (var col in mat.m_SavedProperties.m_Colors)
                 {
+                    iMat.Colors[col.Key] = col.Value;
                     switch (col.Key)
                     {
                         case "_Color":
@@ -695,6 +696,7 @@ namespace AssetStudio
 
                 foreach (var flt in mat.m_SavedProperties.m_Floats)
                 {
+                    iMat.Floats[flt.Key] = flt.Value;
                     switch (flt.Key)
                     {
                         case "_Shininess":
@@ -715,7 +717,7 @@ namespace AssetStudio
                         continue;
                     }
 
-                    var texture = new ImportedMaterialTexture();
+                    var texture = new ImportedMaterialTexture { Property = texEnv.Key };
                     iMat.Textures.Add(texture);
 
                     int dest = -1;

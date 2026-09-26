@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -204,12 +204,17 @@ namespace AssetStudio
         public float Shininess { get; set; }
         public float Transparency { get; set; }
         public List<ImportedMaterialTexture> Textures { get; set; }
+        /// <summary>All the float and color properties of the material (e.g. _Metallic, _Glossiness, _BaseColor).</summary>
+        public Dictionary<string, float> Floats { get; set; } = new Dictionary<string, float>();
+        public Dictionary<string, Color> Colors { get; set; } = new Dictionary<string, Color>();
     }
 
     public class ImportedMaterialTexture
     {
         public string Name { get; set; }
         public int Dest { get; set; }
+        /// <summary>The texture property of the material (e.g. _MainTex, _MetallicGlossMap).</summary>
+        public string Property { get; set; }
         public Vector2 Offset { get; set; }
         public Vector2 Scale { get; set; }
     }

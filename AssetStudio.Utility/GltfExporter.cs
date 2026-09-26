@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -48,7 +48,34 @@ namespace AssetStudio
         private readonly Dictionary<ImportedFrame, int> nodeIndices = new Dictionary<ImportedFrame, int>();
         private readonly Dictionary<string, int> materialIndices = new Dictionary<string, int>();
         private readonly Dictionary<string, int> textureIndices = new Dictionary<string, int>();
-        private readonly Dictionary<string, (int node, List<string> targetNames)> morphMeshes = new Dictionary<string, (int, List<string>)>();
+        private readonly Dictionary<string, (int node, List<MorphChannel> channels, int targetCount)> morphMeshes = new Dictionary<string, (int, List<MorphChannel>, int)>();
+
+        /// <summary>A blend shape channel: its frames (in-between shapes, by weight 0 to 100) are targets from <see cref="FirstTarget"/>.</summary>
+        private sealed record MorphChannel(string Name, float[] FrameWeights, int FirstTarget)
+        {
+            /// <summary>The target weights of a channel weight, blended like Unity (and the preview's BlendShapeSet).</summary>
+            public void Write(float weight, float[] values, int offset)
+            {
+                var frames = FrameWeights;
+                if (weight <= 0)
+                    return;
+                float Ratio(float w, float frame) => frame != 0 ? w / frame : 0;
+                if (weight <= frames[0] || frames.Length == 1)
+                {
+                    values[offset + FirstTarget] = Ratio(weight, frames[0]);
+                    return;
+                }
+                var next = Array.FindIndex(frames, x => x >= weight);
+                if (next < 0)
+                {
+                    values[offset + FirstTarget + frames.Length - 1] = Ratio(weight, frames[^1]);
+                    return;
+                }
+                var t = (weight - frames[next - 1]) / Math.Max(frames[next] - frames[next - 1], 1e-6f);
+                values[offset + FirstTarget + next - 1] = 1 - t;
+                values[offset + FirstTarget + next] = t;
+            }
+        }
         private readonly HashSet<string> writtenImages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> extensionsUsed = new HashSet<string>();
 
@@ -556,37 +583,20 @@ namespace AssetStudio
             var vertices = mesh.VertexList;
             var targets = new JArray();
             var names = new List<string>();
+            var channels = new List<MorphChannel>();
             foreach (var channel in morph.Channels)
             {
-                //glTF has one shape per target: the full weight one (the last) of the in-between shapes
-                var keyframe = channel.KeyframeList?.LastOrDefault();
-                if (keyframe?.VertexList == null)
+                //glTF has one shape per target: every frame of the in-between shapes is a target, named "channel@weight"
+                //but for the full weight one (the last); the animations blend them like Unity
+                var keyframes = (channel.KeyframeList ?? new List<ImportedMorphKeyframe>()).Where(x => x?.VertexList != null).OrderBy(x => x.Weight).ToList();
+                if (keyframes.Count == 0)
                     continue;
-                var positions = new float[vertices.Count * 3];
-                var normals = keyframe.hasNormals && mesh.hasNormal ? new float[vertices.Count * 3] : null;
-                foreach (var morphVertex in keyframe.VertexList)
+                channels.Add(new MorphChannel(channel.Name, keyframes.Select(x => x.Weight).ToArray(), targets.Count));
+                for (int k = 0; k < keyframes.Count; k++)
                 {
-                    var index = (int)morphVertex.Index;
-                    if (index >= vertices.Count)
-                        continue;
-                    var delta = morphVertex.Vertex.Vertex - vertices[index].Vertex;
-                    positions[index * 3] = delta.X * Scale;
-                    positions[index * 3 + 1] = delta.Y * Scale;
-                    positions[index * 3 + 2] = delta.Z * Scale;
-                    if (normals != null)
-                    {
-                        //the normals of a shape are deltas too
-                        var n = morphVertex.Vertex.Normal;
-                        normals[index * 3] = n.X;
-                        normals[index * 3 + 1] = n.Y;
-                        normals[index * 3 + 2] = n.Z;
-                    }
+                    targets.Add(AddMorphTarget(mesh, keyframes[k]));
+                    names.Add(k == keyframes.Count - 1 ? channel.Name : $"{channel.Name}@{keyframes[k].Weight.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
                 }
-                var target = new JObject { ["POSITION"] = AddAccessor(positions, 3, "VEC3", ARRAY_BUFFER, true) };
-                if (normals != null)
-                    target["NORMAL"] = AddAccessor(normals, 3, "VEC3", ARRAY_BUFFER);
-                targets.Add(target);
-                names.Add(channel.Name);
             }
             if (targets.Count == 0)
                 return;
@@ -596,7 +606,36 @@ namespace AssetStudio
             }
             gltfMesh["weights"] = new JArray(names.Select(_ => 0f));
             gltfMesh["extras"] = new JObject { ["targetNames"] = new JArray(names) };
-            morphMeshes[mesh.Path] = (nodeIndex, names);
+            morphMeshes[mesh.Path] = (nodeIndex, channels, targets.Count);
+        }
+
+        private JObject AddMorphTarget(ImportedMesh mesh, ImportedMorphKeyframe keyframe)
+        {
+            var vertices = mesh.VertexList;
+            var positions = new float[vertices.Count * 3];
+            var normals = keyframe.hasNormals && mesh.hasNormal ? new float[vertices.Count * 3] : null;
+            foreach (var morphVertex in keyframe.VertexList)
+            {
+                var index = (int)morphVertex.Index;
+                if (index >= vertices.Count)
+                    continue;
+                var delta = morphVertex.Vertex.Vertex - vertices[index].Vertex;
+                positions[index * 3] = delta.X * Scale;
+                positions[index * 3 + 1] = delta.Y * Scale;
+                positions[index * 3 + 2] = delta.Z * Scale;
+                if (normals != null)
+                {
+                    //the normals of a shape are deltas too
+                    var n = morphVertex.Vertex.Normal;
+                    normals[index * 3] = n.X;
+                    normals[index * 3 + 1] = n.Y;
+                    normals[index * 3 + 2] = n.Z;
+                }
+            }
+            var target = new JObject { ["POSITION"] = AddAccessor(positions, 3, "VEC3", ARRAY_BUFFER, true) };
+            if (normals != null)
+                target["NORMAL"] = AddAccessor(normals, 3, "VEC3", ARRAY_BUFFER);
+            return target;
         }
 
         #endregion
@@ -613,7 +652,22 @@ namespace AssetStudio
             if (material == null)
                 return -1;
 
-            var diffuse = material.Diffuse;
+            var floats = material.Floats ?? new Dictionary<string, float>();
+            var colors = material.Colors ?? new Dictionary<string, Color>();
+            var textures = material.Textures ?? new List<ImportedMaterialTexture>();
+            ImportedMaterialTexture Texture(params string[] properties) =>
+                properties.Select(p => textures.FirstOrDefault(x => x.Property == p && ImportedHelpers.FindTexture(x.Name, imported.TextureList)?.Data?.Length > 0)).FirstOrDefault(x => x != null);
+            float? Float(params string[] properties) => properties.Where(floats.ContainsKey).Select(x => (float?)floats[x]).FirstOrDefault();
+
+            //Dest: 0 diffuse, 1 normal (name), 2 specular, 3 bump map (see ModelConverter.ConvertMaterial)
+            var baseTexture = textures.FirstOrDefault(x => x.Dest == 0) ?? Texture("_BaseMap", "_BaseColorMap");
+            var normalTexture = textures.FirstOrDefault(x => x.Dest == 3 || x.Dest == 1) ?? Texture("_NormalMap");
+            //Standard and URP/HDRP Lit: the metallic workflow, every map with the main texture's tiling
+            var specularSetup = Float("_WorkflowMode") == 0 || textures.Any(x => x.Property == "_SpecGlossMap") && !floats.ContainsKey("_Metallic");
+            var metallicWorkflow = !specularSetup && Float("_Metallic") != null;
+            var mainTransform = metallicWorkflow ? baseTexture : null;
+
+            var diffuse = colors.TryGetValue("_BaseColor", out var baseColor) && !colors.ContainsKey("_Color") ? baseColor : material.Diffuse;
             var pbr = new JObject
             {
                 ["baseColorFactor"] = new JArray(Clamp01(diffuse.R), Clamp01(diffuse.G), Clamp01(diffuse.B), Clamp01(diffuse.A)),
@@ -621,27 +675,95 @@ namespace AssetStudio
                 ["roughnessFactor"] = 1f,
             };
             var gltfMaterial = new JObject { ["name"] = name, ["pbrMetallicRoughness"] = pbr };
-            var emissive = material.Emissive;
-            if (emissive.R > 0 || emissive.G > 0 || emissive.B > 0)
-                gltfMaterial["emissiveFactor"] = new JArray(Clamp01(emissive.R), Clamp01(emissive.G), Clamp01(emissive.B));
-            if (diffuse.A < 1f)
-                gltfMaterial["alphaMode"] = "BLEND";
-
-            foreach (var materialTexture in material.Textures ?? new List<ImportedMaterialTexture>())
+            if (baseTexture != null && AddTexture(baseTexture) is { } baseInfo)
+                pbr["baseColorTexture"] = baseInfo;
+            if (normalTexture != null && AddNormalTexture(normalTexture, mainTransform) is { } normalInfo)
             {
-                //Dest: 0 diffuse, 1 normal (name), 2 specular, 3 bump map (see ModelConverter.ConvertMaterial)
-                if (materialTexture.Dest == 0 && pbr["baseColorTexture"] == null)
+                var bumpScale = Float("_BumpScale");
+                if (bumpScale != null && bumpScale != 1)
+                    normalInfo["scale"] = bumpScale.Value;
+                gltfMaterial["normalTexture"] = normalInfo;
+            }
+
+            if (metallicWorkflow)
+            {
+                //Unity: metallic in R and smoothness in A of _MetallicGlossMap (or the albedo's A); glTF: metallic in B, roughness in G
+                var smoothness = Float("_Glossiness", "_Smoothness") ?? 0.5f;
+                var metallicMap = Texture("_MetallicGlossMap", "_MetallicMap");
+                var fromAlbedo = Float("_SmoothnessTextureChannel") == 1 && baseTexture != null;
+                var smoothnessSource = fromAlbedo ? baseTexture : metallicMap;
+                if (metallicMap != null || fromAlbedo)
                 {
-                    var texture = AddTexture(materialTexture);
-                    if (texture != null)
-                        pbr["baseColorTexture"] = texture;
+                    //with a map, the scale of the smoothness is _GlossMapScale (Standard) or _Smoothness (URP)
+                    var scale = floats.ContainsKey("_Glossiness") ? Float("_GlossMapScale") ?? 1f : floats.ContainsKey("_Smoothness") ? smoothness : 1f;
+                    var metallic = metallicMap != null ? null : (float?)Float("_Metallic");
+                    var info = AddPackedTexture($"{Path.GetFileNameWithoutExtension(metallicMap?.Name ?? baseTexture.Name)}_metallicRoughness",
+                        metallicMap ?? baseTexture, smoothnessSource, mainTransform ?? metallicMap, (m, g) =>
+                        {
+                            var roughness = 1f - g.A / 255f * scale;
+                            return new SixLabors.ImageSharp.PixelFormats.Rgba32(255, ToByte(roughness), metallic is { } value ? ToByte(value) : m.R, 255);
+                        });
+                    if (info != null)
+                    {
+                        pbr["metallicRoughnessTexture"] = info;
+                        pbr["metallicFactor"] = 1f;
+                    }
+                    else
+                    {
+                        pbr["metallicFactor"] = Clamp01(Float("_Metallic") ?? 0);
+                        pbr["roughnessFactor"] = Clamp01(1 - smoothness);
+                    }
                 }
-                else if ((materialTexture.Dest == 3 || materialTexture.Dest == 1) && gltfMaterial["normalTexture"] == null)
+                else
                 {
-                    var texture = AddTexture(materialTexture);
-                    if (texture != null)
-                        gltfMaterial["normalTexture"] = texture;
+                    pbr["metallicFactor"] = Clamp01(Float("_Metallic") ?? 0);
+                    pbr["roughnessFactor"] = Clamp01(1 - smoothness);
                 }
+
+                //occlusion in G (Unity), in R for glTF
+                var occlusionMap = Texture("_OcclusionMap");
+                if (occlusionMap != null)
+                {
+                    var info = AddPackedTexture($"{Path.GetFileNameWithoutExtension(occlusionMap.Name)}_occlusion", occlusionMap, null, mainTransform ?? occlusionMap,
+                        (o, _) => new SixLabors.ImageSharp.PixelFormats.Rgba32(o.G, o.G, o.G, 255), keepWhenGray: true);
+                    if (info != null)
+                    {
+                        var strength = Float("_OcclusionStrength");
+                        if (strength != null && strength != 1)
+                            info["strength"] = Clamp01(strength.Value);
+                        gltfMaterial["occlusionTexture"] = info;
+                    }
+                }
+            }
+
+            var emissive = colors.TryGetValue("_EmissionColor", out var emissionColor) ? emissionColor : material.Emissive;
+            if (emissive.R > 0 || emissive.G > 0 || emissive.B > 0)
+            {
+                var max = Math.Max(emissive.R, Math.Max(emissive.G, emissive.B));
+                if (max > 1)
+                {
+                    //HDR emission
+                    extensionsUsed.Add("KHR_materials_emissive_strength");
+                    gltfMaterial["extensions"] = new JObject { ["KHR_materials_emissive_strength"] = new JObject { ["emissiveStrength"] = max } };
+                    emissive = new Color(emissive.R / max, emissive.G / max, emissive.B / max, 1);
+                }
+                gltfMaterial["emissiveFactor"] = new JArray(Clamp01(emissive.R), Clamp01(emissive.G), Clamp01(emissive.B));
+                var emissionMap = Texture("_EmissionMap", "_EmissiveColorMap");
+                if (emissionMap != null && AddTexture(emissionMap, mainTransform) is { } emissionInfo)
+                    gltfMaterial["emissiveTexture"] = emissionInfo;
+            }
+
+            //alpha: Standard _Mode (0 opaque, 1 cutout, 2 fade, 3 transparent), URP _Surface (1 transparent) and _AlphaClip
+            var mode = Float("_Mode");
+            var surface = Float("_Surface", "_SurfaceType");
+            if (mode == 1 || Float("_AlphaClip") == 1 || Float("_AlphaCutoffEnable") == 1)
+            {
+                gltfMaterial["alphaMode"] = "MASK";
+                gltfMaterial["alphaCutoff"] = Clamp01(Float("_Cutoff", "_AlphaCutoff") ?? 0.5f);
+            }
+            else if (mode is 2 or 3 || surface == 1 || mode == null && surface == null && diffuse.A < 1f)
+            {
+                gltfMaterial["alphaMode"] = "BLEND";
             }
 
             materials.Add(gltfMaterial);
@@ -652,41 +774,169 @@ namespace AssetStudio
 
         private static float Clamp01(float value) => float.IsNaN(value) ? 0 : Math.Clamp(value, 0f, 1f);
 
-        private JObject AddTexture(ImportedMaterialTexture materialTexture)
+        private static byte ToByte(float value) => (byte)Math.Round(Clamp01(value) * 255);
+
+        /// <summary>The texture of a material texture; the tiling of <paramref name="transform"/> when given (the main texture's).</summary>
+        private JObject AddTexture(ImportedMaterialTexture materialTexture, ImportedMaterialTexture transform = null)
         {
             var texture = ImportedHelpers.FindTexture(materialTexture.Name, imported.TextureList);
             if (texture?.Data == null || texture.Data.Length == 0)
                 return null;
-            if (!textureIndices.TryGetValue(texture.Name, out var index))
+            var index = AddImage(texture.Name, () => texture.Data);
+            return index < 0 ? null : TextureInfo(index, transform ?? materialTexture);
+        }
+
+        /// <summary>
+        /// A normal map in glTF's layout (X, Y, Z in RGB): Unity's DXT5nm layout (X in A, Y in G, R at 1) and two channel
+        /// maps (BC5: X in R, Y in G, B at 0) get their Z back; other maps are used as they are.
+        /// </summary>
+        private JObject AddNormalTexture(ImportedMaterialTexture materialTexture, ImportedMaterialTexture transform)
+        {
+            var texture = ImportedHelpers.FindTexture(materialTexture.Name, imported.TextureList);
+            if (texture?.Data == null || texture.Data.Length == 0)
+                return null;
+            var layout = 0; //0 RGB, 1 AG, 2 RG
+            try
             {
-                var image = new JObject { ["name"] = Path.GetFileNameWithoutExtension(texture.Name) };
-                var mimeType = MimeType(texture.Data);
-                if (binary)
+                using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(texture.Data);
+                bool redFull = true, blueZero = true, alphaVaries = false;
+                var firstAlpha = image[0, 0].A;
+                image.ProcessPixelRows(rows =>
                 {
-                    image["bufferView"] = AddBufferView(texture.Data, null);
-                    image["mimeType"] = mimeType ?? "image/png";
-                }
-                else
-                {
-                    var fileName = texture.Name;
-                    if (writtenImages.Add(fileName))
+                    for (int y = 0; y < rows.Height; y++)
                     {
-                        File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)), fileName), texture.Data);
+                        foreach (var pixel in rows.GetRowSpan(y))
+                        {
+                            redFull &= pixel.R >= 250;
+                            blueZero &= pixel.B <= 5;
+                            alphaVaries |= pixel.A != firstAlpha;
+                        }
                     }
-                    image["uri"] = Uri.EscapeDataString(fileName);
-                }
-                images.Add(image);
-                if (samplers.Count == 0)
-                {
-                    samplers.Add(new JObject { ["magFilter"] = 9729, ["minFilter"] = 9987, ["wrapS"] = 10497, ["wrapT"] = 10497 });
-                }
-                textures.Add(new JObject { ["source"] = images.Count - 1, ["sampler"] = 0 });
-                index = textures.Count - 1;
-                textureIndices[texture.Name] = index;
+                });
+                layout = redFull && alphaVaries ? 1 : blueZero ? 2 : 0;
             }
+            catch (Exception e)
+            {
+                Logger.Warning($"glTF: unable to read {materialTexture.Name}: {e.Message}");
+            }
+            if (layout == 0)
+                return AddTexture(materialTexture, transform);
+            return AddPackedTexture($"{Path.GetFileNameWithoutExtension(texture.Name)}_normal", materialTexture, null, transform ?? materialTexture, (p, _) =>
+            {
+                var x = (layout == 1 ? p.A : p.R) / 255f * 2 - 1;
+                var y = p.G / 255f * 2 - 1;
+                var z = MathF.Sqrt(Math.Max(0, 1 - x * x - y * y));
+                return new SixLabors.ImageSharp.PixelFormats.Rgba32(layout == 1 ? p.A : p.R, p.G, ToByte(z * 0.5f + 0.5f), 255);
+            });
+        }
+
+        /// <summary>
+        /// A texture made from the pixels of one or two textures (same size, or the second resized): glTF's channel layout
+        /// for Unity's maps. With <paramref name="keepWhenGray"/>, a gray image is used as it is.
+        /// </summary>
+        private JObject AddPackedTexture(string name, ImportedMaterialTexture first, ImportedMaterialTexture second, ImportedMaterialTexture transform,
+            Func<SixLabors.ImageSharp.PixelFormats.Rgba32, SixLabors.ImageSharp.PixelFormats.Rgba32, SixLabors.ImageSharp.PixelFormats.Rgba32> pixel, bool keepWhenGray = false)
+        {
+            var a = ImportedHelpers.FindTexture(first.Name, imported.TextureList);
+            var b = second == null ? null : ImportedHelpers.FindTexture(second.Name, imported.TextureList);
+            if (a?.Data == null || a.Data.Length == 0)
+                return null;
+            var key = $"{name}.png";
+            var index = AddImage(key, () =>
+            {
+                try
+                {
+                    using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(a.Data);
+                    using var other = b?.Data?.Length > 0 ? SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(b.Data) : image.Clone();
+                    if (other.Width != image.Width || other.Height != image.Height)
+                        SixLabors.ImageSharp.Processing.ProcessingExtensions.Mutate(other, x => SixLabors.ImageSharp.Processing.ResizeExtensions.Resize(x, image.Width, image.Height));
+                    var gray = keepWhenGray;
+                    image.ProcessPixelRows(other, (rows, otherRows) =>
+                    {
+                        for (int y = 0; y < rows.Height; y++)
+                        {
+                            var row = rows.GetRowSpan(y);
+                            var otherRow = otherRows.GetRowSpan(y);
+                            for (int x = 0; x < row.Length; x++)
+                            {
+                                gray &= row[x].R == row[x].G && row[x].G == row[x].B;
+                                row[x] = pixel(row[x], otherRow[x]);
+                            }
+                        }
+                    });
+                    if (gray && MimeType(a.Data) != null)
+                        return a.Data;
+                    using var stream = new MemoryStream();
+                    SixLabors.ImageSharp.ImageExtensions.SaveAsPng(image, stream);
+                    return stream.ToArray();
+                }
+                catch (Exception e)
+                {
+                    Logger.Warning($"glTF: unable to convert {first.Name}: {e.Message}");
+                    return null;
+                }
+            });
+            return index < 0 ? null : TextureInfo(index, transform);
+        }
+
+        /// <summary>The texture index of an image (written once); PNG or JPEG, other formats are converted to PNG.</summary>
+        private int AddImage(string name, Func<byte[]> data)
+        {
+            if (textureIndices.TryGetValue(name, out var index))
+                return index;
+            var bytes = data();
+            if (bytes == null || bytes.Length == 0)
+            {
+                textureIndices[name] = -1;
+                return -1;
+            }
+            var mimeType = MimeType(bytes);
+            if (mimeType == null || mimeType == "image/webp")
+            {
+                try
+                {
+                    using var image = SixLabors.ImageSharp.Image.Load(bytes);
+                    using var stream = new MemoryStream();
+                    SixLabors.ImageSharp.ImageExtensions.SaveAsPng(image, stream);
+                    bytes = stream.ToArray();
+                    mimeType = "image/png";
+                    name = Path.ChangeExtension(name, ".png");
+                }
+                catch (Exception e)
+                {
+                    Logger.Warning($"glTF: unable to convert {name} to PNG: {e.Message}");
+                }
+            }
+            var imageObject = new JObject { ["name"] = Path.GetFileNameWithoutExtension(name) };
+            if (binary)
+            {
+                imageObject["bufferView"] = AddBufferView(bytes, null);
+                imageObject["mimeType"] = mimeType ?? "image/png";
+            }
+            else
+            {
+                if (writtenImages.Add(name))
+                {
+                    File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)), name), bytes);
+                }
+                imageObject["uri"] = Uri.EscapeDataString(name);
+            }
+            images.Add(imageObject);
+            if (samplers.Count == 0)
+            {
+                samplers.Add(new JObject { ["magFilter"] = 9729, ["minFilter"] = 9987, ["wrapS"] = 10497, ["wrapT"] = 10497 });
+            }
+            this.textures.Add(new JObject { ["source"] = images.Count - 1, ["sampler"] = 0 });
+            index = this.textures.Count - 1;
+            textureIndices[name] = index;
+            return index;
+        }
+
+        private JObject TextureInfo(int index, ImportedMaterialTexture transform)
+        {
             var info = new JObject { ["index"] = index };
-            var scale = materialTexture.Scale;
-            var offset = materialTexture.Offset;
+            var scale = transform?.Scale ?? new Vector2(1, 1);
+            var offset = transform?.Offset ?? new Vector2(0, 0);
             if (scale.X != 1 || scale.Y != 1 || offset.X != 0 || offset.Y != 0)
             {
                 //Unity: uv * scale + offset with V up; glTF's V goes down
@@ -804,18 +1054,33 @@ namespace AssetStudio
             {
                 if (!morphMeshes.TryGetValue(meshPath, out var morph))
                     continue;
-                var times = curves.SelectMany(x => x.Keyframes.Select(k => k.time)).Distinct().OrderBy(x => x).ToArray();
+                var byName = curves.GroupBy(x => x.ChannelName).ToDictionary(x => x.Key, x => Sorted(x.SelectMany(c => c.Keyframes).ToList()));
+                var timeSet = new SortedSet<float>(byName.Values.SelectMany(x => x.Select(k => k.time)));
+                //with in-between shapes the target weights bend where the channel weight crosses a frame weight: keys there too
+                foreach (var channel in morph.channels.Where(x => x.FrameWeights.Length > 1 && byName.ContainsKey(x.Name)))
+                {
+                    var keyframes = byName[channel.Name];
+                    for (int k = 1; k < keyframes.Count; k++)
+                    {
+                        var (a, b) = (keyframes[k - 1], keyframes[k]);
+                        foreach (var frame in channel.FrameWeights)
+                        {
+                            if ((a.value - frame) * (b.value - frame) < 0)
+                                timeSet.Add(a.time + (b.time - a.time) * (frame - a.value) / (b.value - a.value));
+                        }
+                    }
+                }
+                var times = timeSet.ToArray();
                 if (times.Length == 0)
                     continue;
-                var byName = curves.GroupBy(x => x.ChannelName).ToDictionary(x => x.Key, x => Sorted(x.SelectMany(c => c.Keyframes).ToList()));
-                var values = new float[times.Length * morph.targetNames.Count];
+                var values = new float[times.Length * morph.targetCount];
                 for (int t = 0; t < times.Length; t++)
                 {
-                    for (int target = 0; target < morph.targetNames.Count; target++)
+                    foreach (var channel in morph.channels)
                     {
-                        if (byName.TryGetValue(morph.targetNames[target], out var keyframes))
+                        if (byName.TryGetValue(channel.Name, out var keyframes))
                         {
-                            values[t * morph.targetNames.Count + target] = Math.Clamp(Evaluate(keyframes, times[t]) / 100f, 0f, 1f);
+                            channel.Write(Math.Clamp(Evaluate(keyframes, times[t]), 0f, 100f), values, t * morph.targetCount);
                         }
                     }
                 }

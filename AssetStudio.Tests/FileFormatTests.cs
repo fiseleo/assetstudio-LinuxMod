@@ -285,7 +285,7 @@ namespace AssetStudio.Tests
             var folder = TestUtil.TempDirectory();
             AssetsHelper.ExportAssetsMap(Entries.ToList(), GameManager.GetGame(GameType.Normal), "map", folder, ExportListType.XML | ExportListType.JSON).Wait();
             var xml = File.ReadAllText(Path.Combine(folder, "map.xml"));
-            Assert.Equal(1, Regex.Matches(xml, "<Address>").Count);
+            Assert.Single(Regex.Matches(xml, "<Address>"));
             var json = JArray.Parse(File.ReadAllText(Path.Combine(folder, "map.json")));
             Assert.Equal("Hero", (string)json[0]["Address"]);
             Assert.Null(json[1]["Address"]);

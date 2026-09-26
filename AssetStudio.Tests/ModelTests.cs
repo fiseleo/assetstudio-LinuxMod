@@ -1,4 +1,4 @@
-using AssetStudio.Avalonia;
+﻿using AssetStudio.Avalonia;
 using Newtonsoft.Json.Linq;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -167,6 +167,14 @@ namespace AssetStudio.Tests
             return model;
         }
 
+        /// <summary>The image of a texture index (from the binary chunk).</summary>
+        public Image<Rgba32> Texture(int texture)
+        {
+            var image = Json["images"][(int)Json["textures"][texture]["source"]];
+            var view = Json["bufferViews"][(int)image["bufferView"]];
+            return Image.Load<Rgba32>(bin.AsSpan((int)(view["byteOffset"] ?? 0), (int)view["byteLength"]));
+        }
+
         public float[] Floats(int accessor)
         {
             var a = Json["accessors"][accessor];
@@ -300,10 +308,12 @@ namespace AssetStudio.Tests
     {
         private static Fbx.ExportOptions Options => new Fbx.ExportOptions { exportSkins = true, exportAnimations = true, exportBlendShape = true, exportAllNodes = true, scaleFactor = 1 };
 
-        [Fact]
-        public void Glb_MatchesThePreviewPosesAtEveryTime()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)] //an in-between shape: the weights of two targets
+        public void Glb_MatchesThePreviewPosesAtEveryTime(bool inBetween)
         {
-            var model = new SyntheticModel();
+            var model = inBetween ? BlendShapeSetTests.ModelWithInBetween() : new SyntheticModel();
             var path = Path.Combine(TestUtil.TempDirectory(), "model.fbx");
             path = ModelExporter.ExportModel(path, model, Options, ModelFormat.Glb);
             Assert.EndsWith(".glb", path);
@@ -312,7 +322,7 @@ namespace AssetStudio.Tests
             var vertices = model.MeshList.SelectMany(m => m.VertexList.Select(v => new NVector3(v.Vertex.X, v.Vertex.Y, v.Vertex.Z))).ToArray();
             var animator = new ModelAnimator(model, vertices, null);
             Assert.Equal(1, animator.ClipCount);
-            foreach (var time in new[] { 0f, 0.3f, 0.5f, 0.85f, 1f })
+            foreach (var time in new[] { 0f, 0.3f, 0.4f, 0.5f, 0.6f, 0.85f, 1f })
             {
                 var expected = new NVector3[vertices.Length];
                 animator.Pose(0, time, expected, null);
@@ -400,9 +410,164 @@ namespace AssetStudio.Tests
         }
     }
 
+    public class GltfMaterialTests
+    {
+        private static MemoryStream Png(Rgba32 pixel)
+        {
+            using var image = new Image<Rgba32>(2, 2, pixel);
+            var png = new MemoryStream();
+            image.SaveAsPng(png);
+            return png;
+        }
+
+        private static MemoryStream PngOf(Rgba32 first, Rgba32 others)
+        {
+            using var image = new Image<Rgba32>(2, 2, others);
+            image[0, 0] = first;
+            var png = new MemoryStream();
+            image.SaveAsPng(png);
+            return png;
+        }
+
+        /// <summary>A Standard (metallic setup) material: maps, cutout, HDR emission.</summary>
+        private static SyntheticModel StandardModel()
+        {
+            var model = new SyntheticModel();
+            model.TextureList.Add(new ImportedTexture(Png(new Rgba32(200, 0, 0, 128)), "Metal.png"));
+            model.TextureList.Add(new ImportedTexture(Png(new Rgba32(10, 100, 10, 255)), "Occlusion.png"));
+            //Unity's DXT5nm layout: X in A, Y in G
+            model.TextureList.Add(new ImportedTexture(PngOf(new Rgba32(255, 128, 0, 200), new Rgba32(255, 90, 0, 128)), "Normal.png"));
+            model.TextureList.Add(new ImportedTexture(Png(new Rgba32(255, 255, 255, 255)), "Emission.png"));
+            var material = model.MaterialList[0];
+            material.Textures[0].Property = "_MainTex";
+            material.Textures.Add(new ImportedMaterialTexture { Name = "Metal.png", Property = "_MetallicGlossMap", Dest = -1, Scale = new Vector2(1, 1) });
+            material.Textures.Add(new ImportedMaterialTexture { Name = "Occlusion.png", Property = "_OcclusionMap", Dest = -1, Scale = new Vector2(1, 1) });
+            material.Textures.Add(new ImportedMaterialTexture { Name = "Normal.png", Property = "_BumpMap", Dest = 3, Scale = new Vector2(1, 1) });
+            material.Textures.Add(new ImportedMaterialTexture { Name = "Emission.png", Property = "_EmissionMap", Dest = -1, Scale = new Vector2(1, 1) });
+            material.Floats = new Dictionary<string, float>
+            {
+                ["_Metallic"] = 0, ["_Glossiness"] = 0.5f, ["_GlossMapScale"] = 0.5f, ["_SmoothnessTextureChannel"] = 0,
+                ["_OcclusionStrength"] = 0.8f, ["_BumpScale"] = 1.5f, ["_Mode"] = 1, ["_Cutoff"] = 0.3f,
+            };
+            material.Colors = new Dictionary<string, Color> { ["_Color"] = material.Diffuse, ["_EmissionColor"] = new Color(2, 1, 0, 1) };
+            material.Emissive = new Color(2, 1, 0, 1);
+            return model;
+        }
+
+        private static (GlbModel glb, JToken material) Export(SyntheticModel model)
+        {
+            var options = new Fbx.ExportOptions { exportSkins = true, exportAnimations = true, exportBlendShape = true, exportAllNodes = true, scaleFactor = 1 };
+            var glb = GlbModel.Load(ModelExporter.ExportModel(Path.Combine(TestUtil.TempDirectory(), "model"), model, options, ModelFormat.Glb));
+            return (glb, glb.Json["materials"].Single());
+        }
+
+        [Fact]
+        public void StandardMaterial_MapsToMetallicRoughness()
+        {
+            var (glb, material) = Export(StandardModel());
+            var pbr = material["pbrMetallicRoughness"];
+            Assert.Equal(1f, (float)pbr["metallicFactor"]);
+            Assert.Equal(1f, (float)pbr["roughnessFactor"]);
+            //metallic (R) in B, roughness = 1 - smoothness (A) * _GlossMapScale in G
+            var packed = glb.Texture((int)pbr["metallicRoughnessTexture"]["index"]);
+            Assert.Equal(200, packed[0, 0].B);
+            Assert.Equal(255 - 64, packed[0, 0].G);
+            //every map with the main texture's tiling (Standard's single TRANSFORM_TEX)
+            var main = pbr["baseColorTexture"]["extensions"]["KHR_texture_transform"].ToString();
+            Assert.Equal(main, pbr["metallicRoughnessTexture"]["extensions"]["KHR_texture_transform"].ToString());
+            Assert.Equal(main, material["normalTexture"]["extensions"]["KHR_texture_transform"].ToString());
+
+            //occlusion from G to R
+            var occlusion = material["occlusionTexture"];
+            Assert.Equal(0.8f, (float)occlusion["strength"], 4);
+            Assert.Equal(100, glb.Texture((int)occlusion["index"])[0, 0].R);
+
+            Assert.Equal(1.5f, (float)material["normalTexture"]["scale"]);
+            //the normal map in RGB with its Z
+            var normal = glb.Texture((int)material["normalTexture"]["index"]);
+            Assert.Equal(200, normal[0, 0].R);
+            Assert.Equal(128, normal[0, 0].G);
+            var (nx, ny) = (200 / 255f * 2 - 1, 128 / 255f * 2 - 1);
+            Assert.Equal(MathF.Sqrt(1 - nx * nx - ny * ny) * 0.5f + 0.5f, normal[0, 0].B / 255f, 2);
+            Assert.Equal(128, normal[1, 1].R);
+            Assert.Equal("MASK", (string)material["alphaMode"]);
+            Assert.Equal(0.3f, (float)material["alphaCutoff"], 4);
+            //HDR emission: the strength extension
+            Assert.Equal(new[] { 1f, 0.5f, 0f }, material["emissiveFactor"].Select(x => (float)x).ToArray());
+            Assert.Equal(2f, (float)material["extensions"]["KHR_materials_emissive_strength"]["emissiveStrength"]);
+            Assert.NotNull(material["emissiveTexture"]);
+            Assert.Contains("KHR_materials_emissive_strength", glb.Json["extensionsUsed"].Select(x => (string)x));
+        }
+
+        [Fact]
+        public void WithoutMaps_TheFactorsComeFromTheFloats()
+        {
+            var model = StandardModel();
+            var material = model.MaterialList[0];
+            material.Textures.RemoveAll(x => x.Property != "_MainTex");
+            material.Floats = new Dictionary<string, float> { ["_Metallic"] = 0.75f, ["_Glossiness"] = 0.25f, ["_Mode"] = 3 };
+            material.Colors.Clear();
+            material.Emissive = new Color(0, 0, 0, 1);
+            var (_, gltf) = Export(model);
+            Assert.Equal(0.75f, (float)gltf["pbrMetallicRoughness"]["metallicFactor"]);
+            Assert.Equal(0.75f, (float)gltf["pbrMetallicRoughness"]["roughnessFactor"]);
+            Assert.Null(gltf["pbrMetallicRoughness"]["metallicRoughnessTexture"]);
+            Assert.Equal("BLEND", (string)gltf["alphaMode"]);
+            Assert.Null(gltf["emissiveFactor"]);
+        }
+
+        [Fact]
+        public void UrpLit_SmoothnessScalesTheMapAndBaseColorIsUsed()
+        {
+            var model = StandardModel();
+            var material = model.MaterialList[0];
+            material.Textures[0].Property = "_BaseMap";
+            material.Textures[0].Dest = -1;
+            material.Floats = new Dictionary<string, float> { ["_WorkflowMode"] = 1, ["_Metallic"] = 0, ["_Smoothness"] = 1, ["_Surface"] = 0 };
+            material.Colors = new Dictionary<string, Color> { ["_BaseColor"] = new Color(0.25f, 0.5f, 1, 1) };
+            material.Emissive = new Color(0, 0, 0, 1);
+            var (glb, gltf) = Export(model);
+            var pbr = gltf["pbrMetallicRoughness"];
+            Assert.NotNull(pbr["baseColorTexture"]);
+            Assert.Equal(new[] { 0.25f, 0.5f, 1f, 1f }, pbr["baseColorFactor"].Select(x => (float)x).ToArray());
+            Assert.Equal(255 - 128, glb.Texture((int)pbr["metallicRoughnessTexture"]["index"])[0, 0].G);
+            Assert.Null(gltf["alphaMode"]);
+        }
+
+        [Fact]
+        public void OtherShaders_KeepTheOldMapping()
+        {
+            var (_, gltf) = Export(new SyntheticModel());
+            Assert.Equal(0f, (float)gltf["pbrMetallicRoughness"]["metallicFactor"]);
+            Assert.Equal(1f, (float)gltf["pbrMetallicRoughness"]["roughnessFactor"]);
+            Assert.Null(gltf["occlusionTexture"]);
+        }
+    }
+
+    public class GltfInBetweenTests
+    {
+        [Fact]
+        public void InBetweenShapes_AreTargetsWithKeysWhereTheyCross()
+        {
+            var model = BlendShapeSetTests.ModelWithInBetween();
+            var options = new Fbx.ExportOptions { exportSkins = true, exportAnimations = true, exportBlendShape = true, exportAllNodes = true, scaleFactor = 1 };
+            var path = ModelExporter.ExportModel(Path.Combine(TestUtil.TempDirectory(), "model"), model, options, ModelFormat.Glb);
+            var json = GlbModel.Load(path).Json;
+            var mesh = json["meshes"].Single(x => x["extras"]?["targetNames"] != null);
+            Assert.Equal(new[] { "Smile@50", "Smile" }, mesh["extras"]["targetNames"].Select(x => (string)x).ToArray());
+            Assert.All(mesh["primitives"], x => Assert.Equal(2, ((JArray)x["targets"]).Count));
+            var animation = json["animations"].Single();
+            var weights = animation["channels"].Single(x => (string)x["target"]["path"] == "weights");
+            var sampler = animation["samplers"][(int)weights["sampler"]];
+            var input = json["accessors"][(int)sampler["input"]];
+            //keys at 0 and 1, and where the weight crosses 50
+            Assert.Equal(3, (int)input["count"]);
+        }
+    }
+
     public class BlendShapeSetTests
     {
-        private static SyntheticModel ModelWithInBetween()
+        internal static SyntheticModel ModelWithInBetween()
         {
             var model = new SyntheticModel();
             var channel = model.MorphList[0].Channels[0];
