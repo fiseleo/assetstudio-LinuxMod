@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -47,6 +47,46 @@ namespace AssetStudio.Avalonia
         public ModelAnimator Animator { get; private set; }
         public int Clip { get; private set; } = -1;
         public float Time { get; private set; }
+
+        /// <summary>The blend shapes of the model or mesh, null when there are none.</summary>
+        public BlendShapeSet BlendShapes => Animator?.BlendShapes ?? meshBlendShapes;
+        private BlendShapeSet meshBlendShapes;
+        private float[] meshBlendShapeWeights;
+        private Vector3[] baseVertices;
+        private Vector3[] baseNormals;
+
+        /// <summary>The blend shape weights of the current pose (a clip's curves override the user weights).</summary>
+        public float[] BlendShapeWeights => Animator?.PosedBlendShapeWeights ?? meshBlendShapeWeights;
+
+        /// <summary>Sets the weight (0 to 100) of a blend shape and updates the vertices.</summary>
+        public void SetBlendShapeWeight(int channel, float weight)
+        {
+            if (Animator?.BlendShapes != null)
+            {
+                Animator.BlendShapeWeights[channel] = weight;
+                SetPose(Clip, Time);
+                return;
+            }
+            if (meshBlendShapes == null)
+                return;
+            meshBlendShapeWeights[channel] = weight;
+            if (!meshBlendShapes.Apply(baseVertices, baseNormals, meshBlendShapeWeights, vertices, normals))
+            {
+                Array.Copy(baseVertices, vertices, vertices.Length);
+                if (normals != null)
+                    Array.Copy(baseNormals, normals, normals.Length);
+            }
+            if (normals != null)
+            {
+                for (int i = 0; i < normals.Length; i++)
+                {
+                    var length = normals[i].Length();
+                    if (length > 0)
+                        normals[i] /= length;
+                }
+            }
+            gpuVerticesChanged = true;
+        }
 
         /// <summary>Places the vertices for a clip of <see cref="Animator"/> at a time (clip -1: rest pose).</summary>
         public void SetPose(int clip, float time)
@@ -127,7 +167,15 @@ namespace AssetStudio.Avalonia
             {
                 idx[i] = (int)m_Mesh.m_Indices[i];
             }
-            return new MeshRenderer(verts, norms, idx);
+            var renderer = new MeshRenderer(verts, norms, idx);
+            renderer.meshBlendShapes = BlendShapeSet.FromMesh(m_Mesh);
+            if (renderer.meshBlendShapes != null)
+            {
+                renderer.meshBlendShapeWeights = new float[renderer.meshBlendShapes.Count];
+                renderer.baseVertices = (Vector3[])verts.Clone();
+                renderer.baseNormals = (Vector3[])norms?.Clone();
+            }
+            return renderer;
         }
 
         /// <param name="maxTextureSize">textures are scaled down to this size (preview memory)</param>

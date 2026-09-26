@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AssetStudio.Avalonia
 {
@@ -27,6 +28,7 @@ namespace AssetStudio.Avalonia
             public string Name;
             public float Duration;
             public Track[] Tracks;
+            public (int channel, ImportedKeyframe<float>[] keys)[] BlendShapeCurves;
         }
 
         private readonly int[] parents;
@@ -53,6 +55,15 @@ namespace AssetStudio.Avalonia
         public string ClipName(int clip) => clips[clip].Name;
         public float ClipDuration(int clip) => clips[clip].Duration;
         public bool HasSkeleton => skeleton.Count > 0;
+
+        /// <summary>The blend shapes of the meshes, null when there are none.</summary>
+        public BlendShapeSet BlendShapes { get; }
+        /// <summary>Blend shape weights (0 to 100) used where the clip has no curve for the channel.</summary>
+        public float[] BlendShapeWeights { get; }
+        /// <summary>The weights of the last pose (the clip's curves applied).</summary>
+        public float[] PosedBlendShapeWeights { get; private set; }
+        private readonly Vector3[] morphedVertices;
+        private readonly Vector3[] morphedNormals;
 
         /// <param name="vertices">the vertices of the meshes of the model, one after the other (mesh space)</param>
         public ModelAnimator(ModelConverter model, Vector3[] vertices, Vector3[] normals)
@@ -146,6 +157,15 @@ namespace AssetStudio.Avalonia
             }
             skin = new Matrix4x4[boneFrame.Count];
 
+            BlendShapes = BlendShapeSet.FromModel(model);
+            if (BlendShapes != null)
+            {
+                BlendShapeWeights = new float[BlendShapes.Count];
+                PosedBlendShapeWeights = new float[BlendShapes.Count];
+                morphedVertices = new Vector3[meshVertices.Length];
+                morphedNormals = meshNormals != null ? new Vector3[meshNormals.Length] : null;
+            }
+
             //a line from each bone to the closest ancestor that is a bone too
             foreach (var frame in boneFrames)
             {
@@ -160,8 +180,20 @@ namespace AssetStudio.Avalonia
             {
                 var clip = new Clip { Name = animation.Name };
                 var tracks = new List<Track>();
+                var curves = new List<(int, ImportedKeyframe<float>[])>();
                 foreach (var track in animation.TrackList)
                 {
+                    if (track.BlendShape != null)
+                    {
+                        var channel = BlendShapes?.Find(track.Path, track.BlendShape.ChannelName) ?? -1;
+                        if (channel >= 0 && track.BlendShape.Keyframes.Count > 0)
+                        {
+                            var keys = track.BlendShape.Keyframes.OrderBy(x => x.time).ToArray();
+                            curves.Add((channel, keys));
+                            clip.Duration = Math.Max(clip.Duration, keys[^1].time);
+                        }
+                        continue;
+                    }
                     var frame = FrameOf(track.Path);
                     if (frame < 0 || (track.Translations.Count == 0 && track.Rotations.Count == 0 && track.Scalings.Count == 0))
                         continue;
@@ -170,9 +202,10 @@ namespace AssetStudio.Avalonia
                     foreach (var key in track.Rotations) clip.Duration = Math.Max(clip.Duration, key.time);
                     foreach (var key in track.Scalings) clip.Duration = Math.Max(clip.Duration, key.time);
                 }
-                if (tracks.Count == 0)
+                if (tracks.Count == 0 && curves.Count == 0)
                     continue;
                 clip.Tracks = tracks.ToArray();
+                clip.BlendShapeCurves = curves.ToArray();
                 clips.Add(clip);
             }
         }
@@ -205,6 +238,22 @@ namespace AssetStudio.Avalonia
                         scale[track.Frame] = Sample(track.Scalings, time, (a, b, t) => Vector3.Lerp(ToNumerics(a), ToNumerics(b), t));
                 }
             }
+            var sourceVertices = meshVertices;
+            var sourceNormals = meshNormals;
+            if (BlendShapes != null)
+            {
+                Array.Copy(BlendShapeWeights, PosedBlendShapeWeights, BlendShapeWeights.Length);
+                if (clip >= 0 && clip < clips.Count)
+                {
+                    foreach (var (channel, keys) in clips[clip].BlendShapeCurves)
+                        PosedBlendShapeWeights[channel] = Sample(keys, time, (a, b, t) => a + (b - a) * t);
+                }
+                if (BlendShapes.Apply(meshVertices, meshNormals, PosedBlendShapeWeights, morphedVertices, morphedNormals))
+                {
+                    sourceVertices = morphedVertices;
+                    sourceNormals = morphedNormals;
+                }
+            }
             for (int i = 0; i < world.Length; i++) //parents come first
             {
                 var local = Matrix4x4.CreateScale(scale[i]) * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(rotation[i])) * Matrix4x4.CreateTranslation(position[i]);
@@ -228,10 +277,10 @@ namespace AssetStudio.Avalonia
                     for (int k = start; k < start + influenceCount[i]; k++)
                         m += skin[influenceBone[k]] * influenceWeight[k];
                 }
-                vertices[i] = Vector3.Transform(meshVertices[i], m);
-                if (normals != null && meshNormals != null && i < normals.Length)
+                vertices[i] = Vector3.Transform(sourceVertices[i], m);
+                if (normals != null && sourceNormals != null && i < normals.Length)
                 {
-                    var n = Vector3.TransformNormal(meshNormals[i], m);
+                    var n = Vector3.TransformNormal(sourceNormals[i], m);
                     var length = n.Length();
                     normals[i] = length > 0 ? n / length : n;
                 }

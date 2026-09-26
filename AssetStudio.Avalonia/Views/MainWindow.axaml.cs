@@ -1475,6 +1475,7 @@ namespace AssetStudio.Avalonia.Views
             meshPreviewHost.IsVisible = false;
             StopAnimation();
             animationBar.IsVisible = false;
+            blendShapePanel.IsVisible = false;
             skeletonCanvas.Children.Clear();
             meshRenderer?.Dispose();
             meshRenderer = null;
@@ -2345,12 +2346,18 @@ namespace AssetStudio.Avalonia.Views
         private void SetupAnimationBar(MeshRenderer renderer)
         {
             StopAnimation();
+            SetupBlendShapes(renderer);
             var animator = renderer.Animator;
+            var hasBlendShapes = renderer.BlendShapes != null;
+            blendShapeButton.IsVisible = hasBlendShapes;
             if (animator == null || (animator.ClipCount == 0 && !animator.HasSkeleton))
             {
-                animationBar.IsVisible = false;
+                //a mesh (or a model without animations) with blend shapes: only the blend shape button
+                clipComboBox.IsVisible = animationPlayButton.IsVisible = animationSlider.IsVisible = animationTimeLabel.IsVisible = skeletonCheckBox.IsVisible = false;
+                animationBar.IsVisible = hasBlendShapes;
                 return;
             }
+            clipComboBox.IsVisible = animationPlayButton.IsVisible = animationSlider.IsVisible = animationTimeLabel.IsVisible = true;
             suppressAnimationEvents = true;
             var items = new List<string> { animator.ClipCount == 0 ? "(no animation)" : "(rest pose)" };
             for (int i = 0; i < animator.ClipCount; i++)
@@ -2378,6 +2385,7 @@ namespace AssetStudio.Avalonia.Views
             animationSlider.Value = hasClip ? renderer.Time : 0;
             suppressAnimationEvents = false;
             animationTimeLabel.Text = hasClip ? $"{renderer.Time:0.00} / {duration:0.00} s" : "";
+            UpdateBlendShapeSliders();
         }
 
         private void StopAnimation()
@@ -2452,6 +2460,90 @@ namespace AssetStudio.Avalonia.Views
             Settings.Default.Save();
             ScheduleMeshRender();
         }
+
+        #region Blend shapes
+
+        private readonly List<(Slider slider, TextBlock value)> blendShapeSliders = new List<(Slider, TextBlock)>();
+        private bool suppressBlendShapeEvents;
+
+        private void SetupBlendShapes(MeshRenderer renderer)
+        {
+            blendShapeList.Children.Clear();
+            blendShapeSliders.Clear();
+            var set = renderer.BlendShapes;
+            if (set == null)
+            {
+                blendShapePanel.IsVisible = false;
+                blendShapeButton.IsChecked = false;
+                return;
+            }
+            var multipleMeshes = set.Channels.Select(x => x.MeshPath).Distinct().Count() > 1;
+            for (int i = 0; i < set.Count; i++)
+            {
+                var channel = set.Channels[i];
+                var index = i;
+                var name = new TextBlock
+                {
+                    Text = multipleMeshes ? $"{channel.Name} ({channel.MeshPath[(channel.MeshPath.LastIndexOf('/') + 1)..]})" : channel.Name,
+                    TextTrimming = global::Avalonia.Media.TextTrimming.CharacterEllipsis,
+                };
+                ToolTip.SetTip(name, $"{channel.MeshPath}: {channel.Name}");
+                var value = new TextBlock { Text = "0", Width = 34, TextAlignment = global::Avalonia.Media.TextAlignment.Right, VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Center };
+                var slider = new Slider { Minimum = 0, Maximum = 100, Value = 0, Margin = new Thickness(0, -6, 0, -6) };
+                slider.ValueChanged += (_, e) =>
+                {
+                    value.Text = e.NewValue.ToString("0");
+                    if (suppressBlendShapeEvents || meshRenderer == null)
+                        return;
+                    meshRenderer.SetBlendShapeWeight(index, (float)e.NewValue);
+                    ScheduleMeshRender();
+                };
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+                row.Children.Add(name);
+                Grid.SetColumn(value, 1);
+                row.Children.Add(value);
+                blendShapeList.Children.Add(row);
+                blendShapeList.Children.Add(slider);
+                blendShapeSliders.Add((slider, value));
+            }
+            blendShapePanel.IsVisible = blendShapeButton.IsChecked == true;
+        }
+
+        /// <summary>Shows the weights of the current pose (a playing clip drives its blend shapes).</summary>
+        private void UpdateBlendShapeSliders()
+        {
+            var weights = meshRenderer?.BlendShapeWeights;
+            if (weights == null || !blendShapePanel.IsVisible)
+                return;
+            suppressBlendShapeEvents = true;
+            for (int i = 0; i < blendShapeSliders.Count && i < weights.Length; i++)
+            {
+                if (blendShapeSliders[i].slider.Value != weights[i])
+                    blendShapeSliders[i].slider.Value = weights[i];
+            }
+            suppressBlendShapeEvents = false;
+        }
+
+        private void BlendShapeButton_Click(object sender, RoutedEventArgs e)
+        {
+            blendShapePanel.IsVisible = blendShapeButton.IsChecked == true && meshRenderer?.BlendShapes != null;
+            UpdateBlendShapeSliders();
+        }
+
+        private void BlendShapeReset_Click(object sender, RoutedEventArgs e)
+        {
+            if (meshRenderer?.BlendShapes == null)
+                return;
+            for (int i = 0; i < meshRenderer.BlendShapes.Count; i++)
+                meshRenderer.SetBlendShapeWeight(i, 0);
+            UpdateBlendShapeSliders();
+            ScheduleMeshRender();
+        }
+
+        // the list scrolls: don't zoom the model
+        private void BlendShapePanel_PointerWheelChanged(object sender, PointerWheelEventArgs e) => e.Handled = true;
+
+        #endregion
 
         // the bar sits on the mesh view: don't rotate the model when clicking it
         private void AnimationBar_PointerPressed(object sender, PointerPressedEventArgs e) => e.Handled = true;

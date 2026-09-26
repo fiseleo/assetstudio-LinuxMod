@@ -255,14 +255,28 @@
                           PointerPressed="AnimationBar_PointerPressed">
                     <!-- dark controls on the dark bar whatever the theme -->
                     <ThemeVariantScope RequestedThemeVariant="Dark">
-                    <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" >
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" >
                       <ComboBox x:Name="clipComboBox" Grid.Column="0" MinWidth="160" MaxWidth="320" SelectionChanged="Clip_SelectionChanged" />
                       <Button x:Name="animationPlayButton" Grid.Column="1" Content="Play" Margin="6,0" MinWidth="64" Click="AnimationPlay_Click" />
                       <Slider x:Name="animationSlider" Grid.Column="2" Minimum="0" Maximum="1" VerticalAlignment="Center" Margin="4,0"
                               ValueChanged="AnimationSlider_ValueChanged" />
                       <TextBlock x:Name="animationTimeLabel" Grid.Column="3" VerticalAlignment="Center" MinWidth="90" Margin="6,0" />
                       <CheckBox x:Name="skeletonCheckBox" Grid.Column="4" Content="Skeleton" Click="Skeleton_Click" />
+                      <ToggleButton x:Name="blendShapeButton" Grid.Column="5" Content="Blend shapes" Margin="6,0,0,0" Click="BlendShapeButton_Click" />
                     </Grid>
+                    </ThemeVariantScope>
+                  </Border>
+                  <!-- blend shape weights: one slider per channel -->
+                  <Border x:Name="blendShapePanel" IsVisible="False" HorizontalAlignment="Right" VerticalAlignment="Top" Width="300"
+                          Margin="0,0,0,44" Background="#B0000000" Padding="8" PointerPressed="AnimationBar_PointerPressed"
+                          PointerWheelChanged="BlendShapePanel_PointerWheelChanged">
+                    <ThemeVariantScope RequestedThemeVariant="Dark">
+                      <DockPanel>
+                        <Button DockPanel.Dock="Bottom" Content="Reset" HorizontalAlignment="Right" Margin="0,6,0,0" Click="BlendShapeReset_Click" />
+                        <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto">
+                          <StackPanel x:Name="blendShapeList" Spacing="2" />
+                        </ScrollViewer>
+                      </DockPanel>
                     </ThemeVariantScope>
                   </Border>
                 </Grid>
