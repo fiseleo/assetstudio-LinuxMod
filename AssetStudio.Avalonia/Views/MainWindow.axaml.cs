@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -503,6 +503,11 @@ namespace AssetStudio.Avalonia.Views
             Title = $"{AppTitle} - {productName} - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}";
 
             assetListView.ItemsSource = visibleAssets;
+            var addressColumn = assetListView.Columns.FirstOrDefault(x => x.Header as string == "Address");
+            if (addressColumn != null)
+            {
+                addressColumn.IsVisible = assetsManager.Catalogs.Count > 0;
+            }
 
             sceneRoots = treeNodeCollection;
             sceneTreeView.ItemsSource = sceneRoots;
@@ -549,6 +554,7 @@ namespace AssetStudio.Avalonia.Views
             assetListView.ItemsSource = null;
             classesListView.ItemsSource = null;
             assetsManager.Clear();
+            assetsManager.ClearCatalogs();
             assemblyLoader.Clear();
             exportableAssets.Clear();
             visibleAssets = exportableAssets;
@@ -1271,7 +1277,7 @@ namespace AssetStudio.Avalonia.Views
                     listSearch.Text = "";
                     return;
                 }
-                bool Matches(AssetItem x) => regex.IsMatch(x.Text) || regex.IsMatch(x.Container) || regex.IsMatch(x.TypeString) || regex.IsMatch(x.m_PathID.ToString(CultureInfo.InvariantCulture));
+                bool Matches(AssetItem x) => regex.IsMatch(x.Text) || regex.IsMatch(x.Container) || regex.IsMatch(x.Address) || regex.IsMatch(x.TypeString) || regex.IsMatch(x.m_PathID.ToString(CultureInfo.InvariantCulture));
                 result = large ? result.AsParallel().AsOrdered().Where(Matches).ToList() : result.FindAll(Matches);
             }
             visibleAssets = result;
@@ -1310,6 +1316,7 @@ namespace AssetStudio.Avalonia.Views
                 "FullSize" => (a, b) => a.FullSize.CompareTo(b.FullSize),
                 "PathID" => (a, b) => a.m_PathID.CompareTo(b.m_PathID),
                 "Container" => (a, b) => string.CompareOrdinal(a.Container, b.Container),
+                "Address" => (a, b) => string.CompareOrdinal(a.Address, b.Address),
                 "TypeString" => (a, b) => string.CompareOrdinal(a.TypeString, b.TypeString),
                 _ => (a, b) => string.Compare(a.Text, b.Text, StringComparison.OrdinalIgnoreCase),
             };
@@ -1481,9 +1488,10 @@ namespace AssetStudio.Avalonia.Views
 
         private void ShowInfo(AssetItem assetItem)
         {
-            if (displayInfo.IsChecked && !string.IsNullOrEmpty(assetItem.InfoText))
+            var info = string.Join("\n\n", new[] { assetItem.InfoText, assetItem.AddressablesInfo }.Where(x => !string.IsNullOrEmpty(x)));
+            if (displayInfo.IsChecked && info.Length > 0)
             {
-                assetInfoLabel.Text = assetItem.InfoText;
+                assetInfoLabel.Text = info;
                 assetInfoBorder.IsVisible = true;
             }
         }
@@ -1600,6 +1608,11 @@ namespace AssetStudio.Avalonia.Views
                     default:
                         await PreviewTextAsync(assetItem, () => assetItem.Asset.Dump());
                         break;
+                }
+                //previews without info of their own still show the address
+                if (assetItem.AddressablesLocation != null && !assetInfoBorder.IsVisible && ReferenceEquals(lastSelectedItem, assetItem))
+                {
+                    ShowInfo(assetItem);
                 }
             }
             catch (Exception e)
@@ -2597,6 +2610,20 @@ namespace AssetStudio.Avalonia.Views
             }
             File.WriteAllText(path, JsonConvert.SerializeObject(nodes, Formatting.Indented));
             Logger.Info("Scene Hierarchy dumped sucessfully !!");
+        }
+
+        private async void ExportAddressablesCatalogs_Click(object sender, RoutedEventArgs e)
+        {
+            if (assetsManager.Catalogs.Count == 0)
+            {
+                StatusStripUpdate("No Addressables catalog loaded (load catalog.json / catalog.bin with the bundles, or put it next to them)");
+                return;
+            }
+            var path = await Dialogs.SaveFileAsync(this, "Save Addressables catalogs", "addressables.json", Settings.Default.lastSaveDirectory, new FilePickerFileType("JSON") { Patterns = new[] { "*.json" } });
+            if (path == null)
+                return;
+            File.WriteAllText(path, JsonConvert.SerializeObject(assetsManager.Catalogs.Select(x => x.ToExportObject()), Formatting.Indented));
+            Logger.Info($"Addressables catalogs exported to {path}");
         }
 
         private static object GetNode(SceneNode treeNode)

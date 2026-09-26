@@ -269,11 +269,20 @@ namespace AssetStudio.CLI
                 }
             }
 
+            if (assetsManager.Catalogs.Count > 0)
+            {
+                foreach (var assetItem in exportableAssets)
+                {
+                    assetItem.AddressablesLocation = assetsManager.FindAddressablesLocation(assetItem.Container, assetItem.SourceFile);
+                }
+            }
+
             var matches = exportableAssets.Where(x =>
             {
                 var isMatchRegex = nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text));
                 var isFilteredType = typeFilters.IsNullOrEmpty() || typeFilters.Contains(x.Type);
-                var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container));
+                //--containers also matches Addressables addresses
+                var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container) || (x.AddressablesLocation != null && y.IsMatch(x.Address)));
                 return isMatchRegex && isFilteredType && isContainerMatch;
             }).ToArray();
             exportableAssets.Clear();

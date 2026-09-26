@@ -6,6 +6,8 @@
         public Object Asset;
         public SerializedFile SourceFile;
         public string Container = string.Empty;
+        public AddressablesCatalog.Location AddressablesLocation;
+        public string Address => AddressablesLocation?.PrimaryKey ?? string.Empty;
         public string TypeString;
         public long m_PathID;
         public long FullSize;

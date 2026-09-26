@@ -101,6 +101,7 @@
         </MenuItem>
         <Separator />
         <MenuItem Header="Scene hierarchy (JSON)..." Click="ExportSceneHierarchy_Click" />
+        <MenuItem Header="Addressables catalogs (JSON)..." Click="ExportAddressablesCatalogs_Click" />
       </MenuItem>
       <MenuItem x:Name="filterTypeMenu" Header="Filter _Type">
         <MenuItem x:Name="filterAll" Header="All" ToggleType="CheckBox" IsChecked="True" Click="FilterType_Click" />
@@ -185,6 +186,7 @@
               <DataGrid.Columns>
                 <DataGridTextColumn Header="Name" Binding="{Binding Text}" Width="2*" MinWidth="110" SortMemberPath="Text" />
                 <DataGridTextColumn Header="Container" Binding="{Binding Container}" Width="2*" MinWidth="80" SortMemberPath="Container" />
+                <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="*" MinWidth="80" SortMemberPath="Address" IsVisible="False" />
                 <DataGridTextColumn Header="Type" Binding="{Binding TypeString}" Width="Auto" MinWidth="90" SortMemberPath="TypeString" />
                 <DataGridTextColumn Header="PathID" Binding="{Binding PathID}" Width="Auto" MaxWidth="150" SortMemberPath="PathID" />
                 <DataGridTextColumn Header="Size" Binding="{Binding FullSize}" Width="Auto" SortMemberPath="FullSize" />

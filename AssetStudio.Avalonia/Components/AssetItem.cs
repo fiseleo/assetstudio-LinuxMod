@@ -1,3 +1,4 @@
+using System.Linq;
 using System.ComponentModel;
 
 namespace AssetStudio.Avalonia
@@ -59,5 +60,23 @@ namespace AssetStudio.Avalonia
         }
 
         public long PathID => m_PathID;
+
+        /// <summary>The Addressables location of the asset, when a catalog is loaded.</summary>
+        public AddressablesCatalog.Location AddressablesLocation;
+
+        public string Address => AddressablesLocation?.PrimaryKey ?? string.Empty;
+
+        public string AddressablesInfo
+        {
+            get
+            {
+                var location = AddressablesLocation;
+                if (location == null)
+                    return null;
+                var labels = string.Join(", ", location.Labels);
+                return $"Address: {location.PrimaryKey}" + (labels.Length > 0 ? $"\nLabels: {labels}" : "")
+                    + (location.Dependencies.Count > 0 ? $"\nBundles: {string.Join(", ", location.Dependencies.Select(x => x.FileName))}" : "");
+            }
+        }
     }
 }

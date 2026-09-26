@@ -194,6 +194,12 @@ namespace AssetStudio.CLI
                         exportableAssets.Clear();
                         assetsManager.Clear();
                     }
+                    if (assetsManager.Catalogs.Count > 0)
+                    {
+                        var catalogPath = Path.Combine(o.Output.FullName, "AddressablesCatalogs.json");
+                        File.WriteAllText(catalogPath, JsonConvert.SerializeObject(assetsManager.Catalogs.Select(x => x.ToExportObject()), Formatting.Indented));
+                        Logger.Info($"Addressables catalogs written to {catalogPath}");
+                    }
                 }
             }
             catch (Exception e)

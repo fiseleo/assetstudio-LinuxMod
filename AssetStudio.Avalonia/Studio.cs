@@ -381,6 +381,17 @@ namespace AssetStudio.Avalonia
                     UpdateContainers();
                 }
             }
+            if (assetsManager.Catalogs.Count > 0)
+            {
+                var found = 0;
+                foreach (var assetItem in exportableAssets)
+                {
+                    assetItem.AddressablesLocation = assetsManager.FindAddressablesLocation(assetItem.Container, assetItem.SourceFile);
+                    if (assetItem.AddressablesLocation != null)
+                        found++;
+                }
+                Logger.Info($"Addressables: {found} assets have an address");
+            }
             visibleAssets = exportableAssets;
 
             StatusStripUpdate("Building tree structure...");
@@ -651,6 +662,10 @@ namespace AssetStudio.Avalonia
                                 writer.WriteStartElement("Asset");
                                 writer.WriteElementString("Name", asset.Name);
                                 writer.WriteElementString("Container", asset.Container);
+                                if (asset.AddressablesLocation != null)
+                                {
+                                    writer.WriteElementString("Address", asset.Address);
+                                }
                                 writer.WriteStartElement("Type");
                                 writer.WriteAttributeString("id", ((int)asset.Type).ToString());
                                 writer.WriteValue(asset.TypeString);

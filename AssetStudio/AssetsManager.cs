@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -159,9 +159,97 @@ namespace AssetStudio
 
         #endregion
 
+        #region Addressables catalogs
+
+        /// <summary>The Addressables catalogs loaded: given with the files, next to them (or up to two folders above), or in catalog bundles.</summary>
+        public List<AddressablesCatalog> Catalogs { get; } = new List<AddressablesCatalog>();
+        private readonly HashSet<string> catalogScanned = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>Loads the catalogs given and those near the files given; returns the other files.</summary>
+        private string[] LoadCatalogs(string[] files)
+        {
+            var candidates = files.Where(AddressablesCatalog.IsCatalogFileName).ToList();
+            foreach (var directory in files.Select(Path.GetDirectoryName).Distinct())
+            {
+                //local builds: aa/<platform>/catalog.json with the bundles in aa/<platform>/<build target>
+                var folder = string.IsNullOrEmpty(directory) ? null : new DirectoryInfo(directory);
+                for (int level = 0; level < 3 && folder != null; level++, folder = folder.Parent)
+                {
+                    if (catalogScanned.Add(folder.FullName) && folder.Exists)
+                    {
+                        candidates.AddRange(folder.EnumerateFiles("catalog*.*").Select(x => x.FullName).Where(AddressablesCatalog.IsCatalogFileName));
+                    }
+                }
+            }
+            foreach (var file in candidates)
+            {
+                if (catalogScanned.Add(Path.GetFullPath(file)))
+                {
+                    AddCatalog(AddressablesCatalog.TryLoad(file));
+                }
+            }
+            return files.Where(x => !AddressablesCatalog.IsCatalogFileName(x)).ToArray();
+        }
+
+        /// <summary>Forgets the catalogs; <see cref="Clear"/> keeps them (the CLI loads and clears one file at a time).</summary>
+        public void ClearCatalogs()
+        {
+            lock (Catalogs)
+            {
+                Catalogs.Clear();
+            }
+            catalogScanned.Clear();
+        }
+
+        private void AddCatalog(AddressablesCatalog catalog)
+        {
+            if (catalog == null)
+                return;
+            lock (Catalogs)
+            {
+                Catalogs.Add(catalog);
+            }
+            Logger.Info($"Loaded the Addressables catalog {Path.GetFileName(catalog.FilePath)} ({catalog.Format}): {catalog.Locations.Count(x => !x.IsBundle)} assets in {catalog.Locations.Count(x => x.IsBundle)} bundles");
+        }
+
+        /// <summary>Catalogs stored as TextAssets (the "bundle local catalog" option: catalog.bundle).</summary>
+        private void LoadCatalogTextAssets()
+        {
+            foreach (var assetsFile in assetsFileList)
+            {
+                foreach (var obj in assetsFile.Objects)
+                {
+                    if (obj is TextAsset textAsset && textAsset.m_Name.StartsWith("catalog", StringComparison.OrdinalIgnoreCase)
+                        && textAsset.m_Script?.Length > 8 && catalogScanned.Add($"{assetsFile.originalPath}|{assetsFile.fileName}|{obj.m_PathID}"))
+                    {
+                        var catalog = AddressablesCatalog.TryRead(textAsset.m_Script, $"{Path.GetFileName(assetsFile.originalPath ?? assetsFile.fullName)}/{textAsset.m_Name}");
+                        AddCatalog(catalog);
+                    }
+                }
+            }
+        }
+
+        /// <summary>The catalog location of an asset: by its container (asset path) in the bundle file it was loaded from.</summary>
+        public AddressablesCatalog.Location FindAddressablesLocation(string container, SerializedFile assetsFile)
+        {
+            if (Catalogs.Count == 0 || string.IsNullOrEmpty(container))
+                return null;
+            var bundleFileName = Path.GetFileName(assetsFile?.originalPath ?? assetsFile?.fullName ?? string.Empty);
+            foreach (var catalog in Catalogs)
+            {
+                var location = catalog.FindAsset(container, bundleFileName);
+                if (location != null)
+                    return location;
+            }
+            return null;
+        }
+
+        #endregion
+
         private void Load(string[] files)
         {
             files = LoadExtractedTypeTrees(files);
+            files = LoadCatalogs(files);
             foreach (var file in files)
             {
                 Logger.Verbose($"caching {file} path and name to filter out duplicates");
@@ -234,6 +322,7 @@ namespace AssetStudio
             {
                 ReadAssets();
                 ProcessAssets();
+                LoadCatalogTextAssets();
             }
         }
 
