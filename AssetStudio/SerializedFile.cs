@@ -312,8 +312,9 @@ namespace AssetStudio
                 type.m_OldTypeHash = reader.ReadBytes(16);
             }
 
-            if (header.m_Version >= SerializedFileFormatVersion.TypeTreeBlobs)
+            if (header.m_Version >= SerializedFileFormatVersion.TypeTreeBlobs && m_EnableTypeTree)
             {
+                // only with type trees (it names the blob); player builds without type trees leave it out
                 type.m_TypeTreeHash = reader.ReadBytes(16);
             }
 
