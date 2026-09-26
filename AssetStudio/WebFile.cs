@@ -43,7 +43,7 @@ namespace AssetStudio
                 dataList.Add(data);
             }
             Logger.Verbose("Writing files to streams...");
-            fileList = new List<StreamFile>();
+            fileList = new List<StreamFile>(dataList.Count);
             for (int i = 0; i < dataList.Count; i++)
             {
                 var data = dataList[i];
@@ -52,7 +52,7 @@ namespace AssetStudio
                 file.fileName = Path.GetFileName(data.path);
                 reader.BaseStream.Position = data.dataOffset;
                 file.stream = new MemoryStream(reader.ReadBytes(data.dataLength));
-                fileList[i] = file;
+                fileList.Add(file);
             }
         }
     }
