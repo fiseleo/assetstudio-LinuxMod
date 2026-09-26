@@ -1,8 +1,10 @@
-using Silk.NET.Core.Native;
+﻿using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 
 namespace AssetStudio.Avalonia
 {
@@ -38,7 +40,7 @@ namespace AssetStudio.Avalonia
         }
     }
 
-    /// <summary>A range of a <see cref="ShadedMesh"/> drawn with a variant of a game's shader, with its uniforms and textures.</summary>
+    /// <summary>Ranges of a <see cref="ShadedMesh"/> drawn with a variant of a game's shader, with its uniforms and textures.</summary>
     public sealed class ShadedDraw : IDisposable
     {
         internal Pipeline Pipeline;
@@ -48,7 +50,7 @@ namespace AssetStudio.Avalonia
         internal DescriptorSet[] Sets = new DescriptorSet[2];
         internal List<(VkBuffer buffer, DeviceMemory memory, IntPtr mapped, UnityConstantBuffer constants, int size)> Uniforms = new();
         internal List<(VkImage image, DeviceMemory memory, ImageView view)> Images = new();
-        internal uint First, Count;
+        internal List<(uint First, uint Count)> Ranges = new();
         internal VulkanMeshRenderer Owner;
         public UnityShaderVariant Variant { get; internal set; }
         public bool Transparent { get; internal set; }
@@ -58,6 +60,34 @@ namespace AssetStudio.Avalonia
             Owner?.FreeShaded(this);
             Owner = null;
         }
+    }
+
+    /// <summary>
+    /// The SPIR-V of the variants (vkd3d-shader), cached by the programs' contents: the sub meshes and previews using the
+    /// same programs translate them once. Thread-safe, so previews can translate in the background.
+    /// </summary>
+    public static class ShadedSpirv
+    {
+        private const int MaxEntries = 512;
+        private static readonly ConcurrentDictionary<string, (byte[] vertex, byte[] fragment)> cache = new();
+
+        public static int Count => cache.Count;
+
+        /// <summary>The vertex program (set 0) and the fragment program (its descriptors moved to set 1).</summary>
+        public static (byte[] Vertex, byte[] Fragment) Get(UnityShaderVariant variant)
+        {
+            var key = Convert.ToHexString(SHA256.HashData(variant.Vertex.Dxbc)) + Convert.ToHexString(SHA256.HashData(variant.Fragment.Dxbc));
+            if (cache.TryGetValue(key, out var spirv))
+                return spirv;
+            spirv = (Vkd3dShader.ToSpirv(variant.Vertex.Dxbc, Vkd3dShader.SourceType.DxbcTpf),
+                SpirvReflection.WithDescriptorSet(Vkd3dShader.ToSpirv(variant.Fragment.Dxbc, Vkd3dShader.SourceType.DxbcTpf), 1));
+            if (cache.Count >= MaxEntries)
+                cache.Clear();
+            cache[key] = spirv;
+            return spirv;
+        }
+
+        public static void Clear() => cache.Clear();
     }
 
     public sealed unsafe partial class VulkanMeshRenderer
@@ -163,14 +193,14 @@ namespace AssetStudio.Avalonia
         /// indices [first, first + count) of a mesh. <paramref name="texture"/> gives the texture of a shader texture
         /// parameter (null: Unity's default texture <paramref name="defaultTexture"/> names, e.g. "white", "bump").
         /// </summary>
-        public ShadedDraw CreateShadedDraw(UnityShaderVariant variant, int first, int count, Func<UnityShaderTexture, PreviewTexture> texture,
+        public ShadedDraw CreateShadedDraw(UnityShaderVariant variant, IEnumerable<(int First, int Count)> ranges, Func<UnityShaderTexture, PreviewTexture> texture,
             Func<UnityShaderTexture, string> defaultTexture)
         {
-            var vertexSpirv = Vkd3dShader.ToSpirv(variant.Vertex.Dxbc, Vkd3dShader.SourceType.DxbcTpf);
-            var fragmentSpirv = SpirvReflection.WithDescriptorSet(Vkd3dShader.ToSpirv(variant.Fragment.Dxbc, Vkd3dShader.SourceType.DxbcTpf), 1);
+            var (vertexSpirv, fragmentSpirv) = ShadedSpirv.Get(variant);
             var reflections = new[] { SpirvReflection.Read(vertexSpirv), SpirvReflection.Read(fragmentSpirv) };
             var stages = new[] { variant.Vertex, variant.Fragment };
-            var draw = new ShadedDraw { Owner = this, Variant = variant, First = (uint)first, Count = (uint)count, Transparent = variant.State.Blend };
+            var draw = new ShadedDraw { Owner = this, Variant = variant, Transparent = variant.State.Blend };
+            draw.Ranges.AddRange(ranges.Where(x => x.Count > 0).Select(x => ((uint)x.First, (uint)x.Count)));
             ShaderModule vertexModule = default, fragmentModule = default;
             try
             {
@@ -605,12 +635,13 @@ namespace AssetStudio.Avalonia
             vk.CmdBindIndexBuffer(commandBuffer, mesh.IndexBuffer, 0, IndexType.Uint32);
             foreach (var draw in draws.Where(x => !x.Transparent).Concat(draws.Where(x => x.Transparent)))
             {
-                if (draw.Pipeline.Handle == 0 || draw.Count == 0)
+                if (draw.Pipeline.Handle == 0 || draw.Ranges.Count == 0)
                     continue;
                 vk.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, draw.Pipeline);
                 fixed (DescriptorSet* sets = draw.Sets)
                     vk.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, draw.Layout, 0, 2, sets, 0, null);
-                vk.CmdDrawIndexed(commandBuffer, draw.Count, 1, draw.First, 0, 0);
+                foreach (var (first, count) in draw.Ranges)
+                    vk.CmdDrawIndexed(commandBuffer, count, 1, first, 0, 0);
             }
             vk.CmdEndRenderPass(commandBuffer);
 

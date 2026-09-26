@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Xunit;
 using Matrix = System.Numerics.Matrix4x4;
 using Vec3 = System.Numerics.Vector3;
@@ -53,6 +53,24 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD0, float4 vertexC
             Assert.True(buffers.Single(x => x.Register == 2).Size >= 80);
             Assert.Equal(new[] { 0, 1, 2, 3 }, reflection.InputLocations.OrderBy(x => x).ToArray());
             Assert.All(reflection.Resources, x => Assert.Equal(0u, x.Set));
+        }
+
+        [SkippableFact]
+        public void ShadedSpirv_TranslatesTheSameProgramsOnce()
+        {
+            Skip.IfNot(Hlsl.Available, "vkd3d-shader not available");
+            UnityShaderVariant Variant() => new UnityShaderVariant
+            {
+                Vertex = new UnityShaderStage { Dxbc = Hlsl.ToDxbc(VertexHlsl, "vs_4_0") },
+                Fragment = new UnityShaderStage { Dxbc = Hlsl.ToDxbc(FragmentHlsl, "ps_4_0") },
+            };
+            var (vertex, fragment) = AssetStudio.Avalonia.ShadedSpirv.Get(Variant());
+            //other objects, same programs (another material, another preview)
+            var again = AssetStudio.Avalonia.ShadedSpirv.Get(Variant());
+            Assert.Same(vertex, again.Vertex);
+            Assert.Same(fragment, again.Fragment);
+            Assert.All(SpirvReflection.Read(fragment).Resources, x => Assert.Equal(1u, x.Set));
+            Assert.All(SpirvReflection.Read(vertex).Resources, x => Assert.Equal(0u, x.Set));
         }
 
         [SkippableFact]

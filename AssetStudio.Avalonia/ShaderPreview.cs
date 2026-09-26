@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using SixLabors.ImageSharp;
 
 namespace AssetStudio.Avalonia
@@ -15,27 +16,41 @@ namespace AssetStudio.Avalonia
     /// material's shader (see <see cref="UnityShaderVariant"/>), compiled from its Direct3D 11 programs for Vulkan.
     /// The <see cref="MeshRenderer"/> it belongs to keeps the camera and the (posed) vertices, in the mirrored space of the
     /// preview: they are mirrored back to Unity's space here.
+    /// The sub meshes with the same material share a draw. <see cref="Prepare"/> does the slow part (translating the
+    /// programs, decoding the textures) and can run in the background; the first <see cref="Render"/> only creates the
+    /// pipelines and uploads the textures.
     /// </summary>
     public sealed class ShaderPreview : IDisposable
     {
         private sealed class Part
         {
-            public int First, Count;
             public Material Material;
             public UnityShaderVariant Variant;
             public ShadedDraw Draw;
+            public List<(int First, int Count)> Ranges = new List<(int, int)>();
+            public Dictionary<string, PreviewTexture> Textures = new Dictionary<string, PreviewTexture>();
             public Dictionary<string, (int, int)> TextureSizes = new Dictionary<string, (int, int)>();
         }
 
-        private readonly List<Part> parts = new List<Part>();
+        /// <summary>A decoded texture (null when it can't be) and its size before any downscaling.</summary>
+        private sealed record DecodedTexture(PreviewTexture Texture, int Width, int Height);
+
+        //by texture object: the previews of the models and materials using a texture decode it once
+        private static readonly ConditionalWeakTable<Texture2D, DecodedTexture> decodedTextures = new ConditionalWeakTable<Texture2D, DecodedTexture>();
+
+        private readonly List<Part> parts = new List<Part>(); //one per material (and variant), with the ranges of its sub meshes
         private readonly ShadedVertices vertices;
         private readonly int[] indices;
+        private readonly object prepareLock = new object();
         private ShadedMesh gpuMesh;
+        private bool prepared;
         private bool failed;
 
         /// <summary>What the preview draws with (the variants), or why it can't.</summary>
         public string Summary { get; private set; }
         public bool IsUsable => parts.Any(x => x.Variant != null) && !failed;
+        /// <summary>Whether <see cref="Prepare"/> has run: the model previews draw without the shaders until then.</summary>
+        public bool IsPrepared => prepared;
 
         private ShaderPreview(ShadedVertices vertices, int[] indices)
         {
@@ -94,7 +109,15 @@ namespace AssetStudio.Avalonia
                     model.SourceMaterials.TryGetValue(submesh.Material ?? "", out var material);
                     if (MaterialOverride != null)
                         material = MaterialOverride(material);
-                    parts.Add(new Part { First = first, Count = indexList.Count - first, Material = material });
+                    var part = parts.FirstOrDefault(x => x.Material == material);
+                    if (part == null)
+                        parts.Add(part = new Part { Material = material });
+                    var indexCount = indexList.Count - first;
+                    //sub meshes one after the other: one range
+                    if (part.Ranges.Count > 0 && part.Ranges[^1].First + part.Ranges[^1].Count == first)
+                        part.Ranges[^1] = (part.Ranges[^1].First, part.Ranges[^1].Count + indexCount);
+                    else
+                        part.Ranges.Add((first, indexCount));
                 }
                 offset += mesh.VertexList.Count;
             }
@@ -158,7 +181,9 @@ namespace AssetStudio.Avalonia
             }
             sphere = new MeshRenderer(mirrored, mirroredNormals, turned);
             var preview = new ShaderPreview(v, indexList.ToArray());
-            preview.parts.Add(new Part { First = 0, Count = indexList.Count, Material = material });
+            var part = new Part { Material = material };
+            part.Ranges.Add((0, indexList.Count));
+            preview.parts.Add(part);
             preview.SelectVariants();
             sphere.ShaderPreview = preview;
             return preview;
@@ -167,9 +192,9 @@ namespace AssetStudio.Avalonia
         private void SelectVariants()
         {
             var lines = new List<string>();
-            foreach (var group in parts.GroupBy(x => x.Material))
+            foreach (var part in parts)
             {
-                var material = group.Key;
+                var material = part.Material;
                 if (material == null || !material.m_Shader.TryGet(out var shader))
                 {
                     lines.Add($"{material?.m_Name ?? "(no material)"}: no shader");
@@ -185,8 +210,7 @@ namespace AssetStudio.Avalonia
                 {
                     reason = e.Message;
                 }
-                foreach (var part in group)
-                    part.Variant = variant;
+                part.Variant = variant;
                 var name = shader.m_ParsedForm?.m_Name ?? shader.m_Name;
                 lines.Add(variant == null
                     ? $"{material.m_Name} ({name}): {reason}"
@@ -195,39 +219,88 @@ namespace AssetStudio.Avalonia
             Summary = string.Join("\n", lines);
         }
 
+        /// <summary>
+        /// Translates the programs and decodes the textures of the variants (thread-safe; later calls return at once).
+        /// Rendering calls it when it hasn't run: call it in the background before to keep the first frame fast.
+        /// </summary>
+        public void Prepare()
+        {
+            lock (prepareLock)
+            {
+                if (prepared)
+                    return;
+                foreach (var part in parts.Where(x => x.Variant != null))
+                {
+                    try
+                    {
+                        ShadedSpirv.Get(part.Variant);
+                    }
+                    catch (Exception e)
+                    {
+                        //reported by the draw creation, which translates again
+                        Logger.Verbose($"Shader preview: {part.Material?.m_Name}: {e.Message}");
+                        continue;
+                    }
+                    foreach (var parameter in part.Variant.Vertex.Textures.Concat(part.Variant.Fragment.Textures))
+                    {
+                        if (parameter.Name != null && !part.Textures.ContainsKey(parameter.Name))
+                            part.Textures[parameter.Name] = DecodeTexture(part, parameter.Name);
+                    }
+                }
+                prepared = true;
+            }
+        }
+
         private PreviewTexture LoadTexture(Part part, UnityShaderTexture parameter)
         {
-            if (part.Material == null || parameter.Name == null)
+            if (parameter.Name == null)
                 return null;
-            foreach (var (name, texEnv) in part.Material.m_SavedProperties.m_TexEnvs)
+            if (!part.Textures.TryGetValue(parameter.Name, out var texture))
+                part.Textures[parameter.Name] = texture = DecodeTexture(part, parameter.Name);
+            return texture;
+        }
+
+        private PreviewTexture DecodeTexture(Part part, string name)
+        {
+            if (part.Material == null)
+                return null;
+            foreach (var (propertyName, texEnv) in part.Material.m_SavedProperties.m_TexEnvs)
             {
-                if (name != parameter.Name || !texEnv.m_Texture.TryGet<Texture2D>(out var texture) || texture is Cubemap)
+                if (propertyName != name || !texEnv.m_Texture.TryGet<Texture2D>(out var texture) || texture is Cubemap)
                     continue;
-                try
-                {
-                    //Unity's rows go up from v = 0: the image as stored, not flipped
-                    using var image = texture.ConvertToImage(false);
-                    if (image == null)
-                        return null;
-                    part.TextureSizes[name] = (image.Width, image.Height);
-                    const int maxSize = 2048;
-                    if (image.Width > maxSize || image.Height > maxSize)
-                    {
-                        var scale = (float)maxSize / Math.Max(image.Width, image.Height);
-                        SixLabors.ImageSharp.Processing.ProcessingExtensions.Mutate(image, x => SixLabors.ImageSharp.Processing.ResizeExtensions.Resize(x,
-                            Math.Max(1, (int)(image.Width * scale)), Math.Max(1, (int)(image.Height * scale))));
-                    }
-                    var pixels = new byte[image.Width * image.Height * 4];
-                    image.CopyPixelDataTo(pixels);
-                    return new PreviewTexture(pixels, image.Width, image.Height);
-                }
-                catch (Exception e)
-                {
-                    Logger.Warning($"Shader preview: unable to decode {texture.m_Name}: {e.Message}");
-                    return null;
-                }
+                var decoded = decodedTextures.GetValue(texture, Decode);
+                if (decoded.Texture != null)
+                    part.TextureSizes[name] = (decoded.Width, decoded.Height);
+                return decoded.Texture;
             }
             return null;
+        }
+
+        private static DecodedTexture Decode(Texture2D texture)
+        {
+            try
+            {
+                //Unity's rows go up from v = 0: the image as stored, not flipped
+                using var image = texture.ConvertToImage(false);
+                if (image == null)
+                    return new DecodedTexture(null, 0, 0);
+                int width = image.Width, height = image.Height;
+                const int maxSize = 2048;
+                if (image.Width > maxSize || image.Height > maxSize)
+                {
+                    var scale = (float)maxSize / Math.Max(image.Width, image.Height);
+                    SixLabors.ImageSharp.Processing.ProcessingExtensions.Mutate(image, x => SixLabors.ImageSharp.Processing.ResizeExtensions.Resize(x,
+                        Math.Max(1, (int)(image.Width * scale)), Math.Max(1, (int)(image.Height * scale))));
+                }
+                var pixels = new byte[image.Width * image.Height * 4];
+                image.CopyPixelDataTo(pixels);
+                return new DecodedTexture(new PreviewTexture(pixels, image.Width, image.Height), width, height);
+            }
+            catch (Exception e)
+            {
+                Logger.Warning($"Shader preview: unable to decode {texture.m_Name}: {e.Message}");
+                return new DecodedTexture(null, 0, 0);
+            }
         }
 
         private static string DefaultTexture(Part part, UnityShaderTexture parameter)
@@ -259,12 +332,13 @@ namespace AssetStudio.Avalonia
                 }
                 if (gpuMesh == null)
                 {
+                    Prepare();
                     gpuMesh = gpu.UploadShaded(vertices, indices);
-                    foreach (var part in parts.Where(x => x.Variant != null && x.Count > 0))
+                    foreach (var part in parts.Where(x => x.Variant != null && x.Ranges.Count > 0))
                     {
                         try
                         {
-                            part.Draw = gpu.CreateShadedDraw(part.Variant, part.First, part.Count, p => LoadTexture(part, p), p => DefaultTexture(part, p));
+                            part.Draw = gpu.CreateShadedDraw(part.Variant, part.Ranges, p => LoadTexture(part, p), p => DefaultTexture(part, p));
                         }
                         catch (Exception e)
                         {

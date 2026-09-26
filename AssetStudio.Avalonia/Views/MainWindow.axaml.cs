@@ -2277,7 +2277,12 @@ namespace AssetStudio.Avalonia.Views
         {
             StatusStripUpdate("Compiling the material's shader...");
             MeshRenderer sphere = null;
-            var preview = await Task.Run(() => ShaderPreview.FromMaterial(material, out sphere));
+            var preview = await Task.Run(() =>
+            {
+                var result = ShaderPreview.FromMaterial(material, out sphere);
+                result.Prepare();
+                return result;
+            });
             if (assetItem != lastSelectedItem)
             {
                 sphere.Dispose();
@@ -2305,15 +2310,59 @@ namespace AssetStudio.Avalonia.Views
             ScheduleMeshRender();
         }
 
+        private MeshRenderer preparingShadersFor;
+
         /// <summary>Builds the shader preview of a model when asked for, and switches between it and the plain preview.</summary>
         private void ApplyGameShaders(MeshRenderer renderer)
         {
             var wanted = gameShadersCheckBox.IsChecked == true;
+            renderer.UseShaders = wanted;
             if (wanted && renderer.ShaderPreview == null && renderer.Model != null)
             {
-                renderer.ShaderPreview = ShaderPreview.FromModel(renderer.Model);
+                //the plain preview until the shaders are ready
+                if (preparingShadersFor != renderer)
+                    PrepareGameShaders(renderer);
+                return;
             }
-            renderer.UseShaders = wanted;
+            ShowShaderSummary(renderer, wanted);
+        }
+
+        /// <summary>Selects the variants, translates the programs and decodes the textures in the background.</summary>
+        private async void PrepareGameShaders(MeshRenderer renderer)
+        {
+            preparingShadersFor = renderer;
+            StatusStripUpdate("Compiling the game's shaders...");
+            var model = renderer.Model;
+            ShaderPreview preview = null;
+            try
+            {
+                preview = await Task.Run(() =>
+                {
+                    var result = ShaderPreview.FromModel(model);
+                    result.Prepare();
+                    return result;
+                });
+            }
+            catch (Exception e)
+            {
+                Logger.Warning($"Shader preview: {e.Message}");
+            }
+            if (preparingShadersFor == renderer)
+                preparingShadersFor = null;
+            if (preview == null || meshRenderer != renderer || renderer.ShaderPreview != null)
+            {
+                //another asset is shown now
+                preview?.Dispose();
+                return;
+            }
+            renderer.ShaderPreview = preview;
+            StatusStripUpdate(preview.IsUsable ? "Drawing with the game's shaders" : "Unable to draw with the game's shaders");
+            ShowShaderSummary(renderer, gameShadersCheckBox.IsChecked == true);
+            ScheduleMeshRender();
+        }
+
+        private void ShowShaderSummary(MeshRenderer renderer, bool wanted)
+        {
             var summary = renderer.ShaderPreview?.Summary;
             if (lastSelectedItem != null && renderer.Model != null)
             {

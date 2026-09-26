@@ -311,7 +311,7 @@ namespace AssetStudio.Avalonia
         public byte[] Render(int width, int height)
         {
             var gpu = VulkanMeshRenderer.Instance;
-            if (gpu != null && UseShaders && ShaderPreview?.IsUsable == true && WireframeMode == 0)
+            if (gpu != null && UseShaders && ShaderPreview?.IsUsable == true && ShaderPreview.IsPrepared && WireframeMode == 0)
             {
                 var shaded = ShaderPreview.Render(gpu, this, width, height);
                 if (shaded != null)
