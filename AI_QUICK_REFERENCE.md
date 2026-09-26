@@ -81,6 +81,7 @@ Keep using interpolated strings there (building the string first defeats it).
 | "Unable to read beyond the end of the stream" in a class | a field added / removed in that version: TypeTreeDumps bisect, compare with the Dump tab |
 | "read X bytes but expected Y" when dumping | the type tree reader (`TypeTreeHelper`): managed references, extracted type trees |
 | Object of a file without type trees shows nothing in Dump | `TypeTreeDatabase` (MonoBehaviour needs assemblies; versions after 6000.7.0a3 are approximated) |
+| "type trees ... were extracted to a .typetreedata file" | load the build's `.typetreedata` with the files (`AssetsManager.LoadExtractedTypeTrees`) |
 | DirectX shader not translated on Linux | `x64/libvkd3d-shader.so` / `libspirv-cross-c-shared.so` next to the executable |
 | Model parts misplaced in the preview | `ModelAnimator` (frame hierarchy, bind poses) |
 

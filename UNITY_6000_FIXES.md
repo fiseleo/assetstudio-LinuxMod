@@ -177,7 +177,11 @@ since there are no public samples of most of these classes):
 | CubemapArray | 5.5: `m_Width, m_CubemapCount, m_Format, m_MipCount, m_DataSize, m_TextureSettings, m_ColorSpace, m_IsReadable`, 5.6: `m_StreamData` |
 | all three | 2019.1: `m_ColorSpace` and `m_Format` move to the front and `m_Format` becomes a GraphicsFormat; 2020.2: `m_UsageMode` |
 
-`[SerializeReference]` (MonoBehaviour): registry version 2 (2021.2 – 6000.6) is a `ManagedReferencesRegistry references`
+Extracted type trees (6000.5+, `.typetreedata`): a UnityFS archive with one type tree blob (`mhtt`, same format as
+inline blobs) per entry, named by the lowercase hex of the SerializedType's type tree hash; reference types too.
+
+`[SerializeReference]` (MonoBehaviour): registry version 1 (2019.3 – 2021.1) has `int id` fields and a
+`ReferencedObject 00000000` node repeated until the type `Terminus` / `UnityEngine.DMAT` / `FAKE_ASM`; version 2 (2021.2 – 6000.6) is a `ManagedReferencesRegistry references`
 node at the end of the type tree, `ReferencedObjectData` has the layout of the matching reference type of the file.
 In 6000.7 (version 3, SerializedFile format 26) the type tree has no registry node: a frame
 `{ int version; int size; ReferencedManagedType types[]; { SInt64 rid; int type; int dataSize } objects[]; data }`

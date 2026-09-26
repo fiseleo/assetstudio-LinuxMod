@@ -20,7 +20,7 @@
 |------|-------|
 | Textures | Texture2D, Sprite, SpriteAtlas; **Cubemap** (exported as a horizontal cross), **Texture2DArray / Texture3D** (a folder with an image per slice), **CubemapArray** (a cross per cube). GraphicsFormat (2019.1+) mapped to the decoders' TextureFormat |
 | Shaders | Unity 5.x to 6000.7, including 6000.x player subprograms (`m_PlayerSubPrograms`). On Linux, DirectX programs (D3D9 bytecode, DXBC SM4/5, DXIL) → Vulkan SPIR-V (vkd3d-shader) → GLSL (SPIRV-Cross). Platform 28 = **D3D12** (6000.7) exported like D3D11 |
-| MonoBehaviour | From the file's type tree, or from assemblies (Load assembly folder / `--dummy_dlls`). **`[SerializeReference]`** registries: version 2 (2021.2+), version 3 (6000.7, a frame in front of the first script field), version 1 (2019.3 to 2021.1, untested) |
+| MonoBehaviour | From the file's type tree (also **extracted type trees**: `.typetreedata` archives given with the files or next to them), or from assemblies (Load assembly folder / `--dummy_dlls`). **`[SerializeReference]`** registries: version 1 (2019.3 to 2021.1), 2 (2021.2+), 3 (6000.7, a frame in front of the first script field), with type trees and with assemblies |
 | Other classes | Any class is dumped (`Dump`) and exported as JSON of its type tree; the CLI exports any class given with `--types`. **TerrainData**: heightmap as 16-bit PNG + Unity RAW + JSON |
 | Models | FBX export (Windows and Linux). Avalonia preview: Vulkan (software fallback), textured, meshes placed by their hierarchy, **skinned, animations played** (Animator controller or legacy Animation clips), skeleton overlay |
 | Audio | FMOD when present; without it FSB5 through Fmod5Sharp (Ogg / WAV). Linux preview through PulseAudio / PipeWire |
@@ -29,15 +29,14 @@
 
 ## Known gaps
 
-- **Extracted type trees** (6000.5+, Addressables "Extract Typetrees", `AssetBundle.typetreedata`) are not loaded: such
-  files fall back to the type tree database (built-in classes) and assemblies (MonoBehaviour).
-- `[SerializeReference]` with type trees generated from assemblies: only 2021.2 and up (registry version 2 / 3).
+- Extracted type trees are only found when the `.typetreedata` file is loaded with the files or sits in the same folder;
+  otherwise a warning is logged and the type tree database / assemblies are used.
 - D3D12 GPU program type numbers are not public (34 = vertex, 37 = pixel seen); every type after the known ones is accepted
   for platform 28. WebGPU (26) and Switch2 (27) programs are skipped.
 - Texture2DArray / CubemapArray: slices assumed one after the other, each with its mips (as UnityPy); layouts verified,
   pixel layout only with synthetic files (no public sample).
 - The type tree database ends at 6000.7.0a3: newer files without type trees are read with the latest known layouts (a warning is logged).
-- WinForms GUI: exports the new texture types, but its preview shows a Cubemap as its first face; no animation preview.
+- WinForms GUI: previews the new texture types and TerrainData (only compiled on Linux, not run); no animation preview.
 - No automated tests in the repository (see *How things were verified*).
 
 ## How things were verified
@@ -45,7 +44,7 @@
 - **Class layouts**: AssetRipper/TypeTreeDumps (`InfoJson/<version>.json`, one file per Unity version) — bisect the
   versions where a class's fields change, then compare AssetStudio's manual reader with a type tree read of the same objects.
 - **Real samples**: UnityDataTools `TestCommon/Data` (player builds and bundles 2019.4 to 6000.7, `AssetBundleTypeTreeVariations`
-  v22 / v23 / v26 with SerializeReference fixtures), public demo bundles (katsumasa, euphoriaer, 764424567, plavip), a Unity 4.5 model.
+  v22 / v23 inline and extracted / v26 with SerializeReference fixtures, `AssetBundles/2019.4.0f1`, `2020.3.0f1` with registry version 1), public demo bundles (katsumasa, euphoriaer, 764424567, plavip), a Unity 4.5 model.
 - **Synthetic files**: SerializedFile (format 22) written from the exact release type trees of a version, with known
   pixel / height data, for classes without public samples (Texture2DArray, Texture3D, CubemapArray, TerrainData), at every layout change.
 - **Type tree database**: for 1500+ objects with type trees, reading with the file's type tree and with the database give the same result.
@@ -81,6 +80,5 @@ Windows: open `AssetStudio.sln`, build `AssetStudio.GUI` / `AssetStudio.CLI` (ne
 ## Next steps (candidates)
 
 - Push the branch and run CI (Linux jobs never ran on GitHub).
-- Load `.typetreedata` files (extracted type trees).
 - Move the verification harnesses (synthetic SerializedFile writer, type tree differential checks) into a test project.
-- Wire the new texture types and animation preview into the WinForms GUI.
+- Animation preview in the WinForms GUI.

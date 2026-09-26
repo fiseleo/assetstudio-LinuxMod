@@ -61,7 +61,7 @@ Note: Requires Internet connection to fetch asset_index jsons.
 - Texture serialization updated for Unity 2023.2+ format changes (removed `m_ForcedFallbackFormat` and `m_DownscaleFallback` fields)
 - Bundle loading, asset enumeration, and texture decoding all functional
 - Known limitation: Some platform-specific texture compression formats may not decode correctly
-- Unity 6000.5+ bundles with *extracted* type trees (`.typetreedata`): built-in classes are read with the type tree database, MonoBehaviours need assemblies
+- Unity 6000.5+ bundles with *extracted* type trees: load the `.typetreedata` file with them (or keep it in the same folder)
 
 ### User Experience
 
