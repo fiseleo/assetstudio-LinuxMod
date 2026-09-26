@@ -562,12 +562,20 @@ namespace AssetStudio
             bind *= FrameWorld(meshFrame);
             if (System.Numerics.Matrix4x4.Invert(FrameWorld(root), out var rootInverse))
                 bind *= rootInverse;
-            nodes.Add(new JObject
+            //as TRS: glTF's node matrices must decompose exactly, which rounding (or a shear) breaks
+            var node = new JObject { ["name"] = bonePath[(bonePath.LastIndexOf('/') + 1)..] };
+            if (System.Numerics.Matrix4x4.Decompose(bind, out var scale, out var rotation, out var translation))
             {
-                ["name"] = bonePath[(bonePath.LastIndexOf('/') + 1)..],
-                ["matrix"] = new JArray(bind.M11, bind.M12, bind.M13, bind.M14, bind.M21, bind.M22, bind.M23, bind.M24,
-                    bind.M31, bind.M32, bind.M33, bind.M34, bind.M41, bind.M42, bind.M43, bind.M44),
-            });
+                rotation = System.Numerics.Quaternion.Normalize(rotation);
+                node["translation"] = new JArray(translation.X, translation.Y, translation.Z);
+                node["rotation"] = new JArray(rotation.X, rotation.Y, rotation.Z, rotation.W);
+                node["scale"] = new JArray(scale.X, scale.Y, scale.Z);
+            }
+            else
+            {
+                node["translation"] = new JArray(bind.M41, bind.M42, bind.M43);
+            }
+            nodes.Add(node);
             var rootNode = (JObject)nodes[nodeIndices[root]];
             var children = rootNode["children"] as JArray ?? new JArray();
             children.Add(nodes.Count - 1);
