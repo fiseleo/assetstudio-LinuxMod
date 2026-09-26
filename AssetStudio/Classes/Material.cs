@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 
 namespace AssetStudio
@@ -73,6 +74,8 @@ namespace AssetStudio
     {
         public PPtr<Shader> m_Shader;
         public UnityPropertySheet m_SavedProperties;
+        /// <summary>The shader keywords enabled on the material (the valid ones from 2021.3 on).</summary>
+        public string[] m_ShaderKeywords = Array.Empty<string>();
 
         public Material(ObjectReader reader) : base(reader)
         {
@@ -80,17 +83,17 @@ namespace AssetStudio
 
             if (version[0] == 4 && version[1] >= 1) //4.x
             {
-                var m_ShaderKeywords = reader.ReadStringArray();
+                m_ShaderKeywords = reader.ReadStringArray();
             }
 
             if (version[0] > 2021 || (version[0] == 2021 && version[1] >= 3)) //2021.3 and up
             {
-                var m_ValidKeywords = reader.ReadStringArray();
+                m_ShaderKeywords = reader.ReadStringArray(); //m_ValidKeywords
                 var m_InvalidKeywords = reader.ReadStringArray();
             }
             else if (version[0] >= 5) //5.0 ~ 2021.2
             {
-                var m_ShaderKeywords = reader.ReadAlignedString();
+                m_ShaderKeywords = reader.ReadAlignedString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
             }
 
             if (version[0] >= 5) //5.0 and up

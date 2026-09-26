@@ -620,6 +620,8 @@ namespace AssetStudio
         public uint m_BlobIndex;
         public ParserBindChannels m_Channels;
         public ushort[] m_KeywordIndices;
+        public ushort[] m_GlobalKeywordIndices; //2019 ~ 2021.1
+        public ushort[] m_LocalKeywordIndices; //2019 ~ 2021.1
         public sbyte m_ShaderHardwareTier;
         public ShaderGpuProgramType m_GpuProgramType;
         public SerializedProgramParameters m_Parameters;
@@ -655,9 +657,9 @@ namespace AssetStudio
 
             if ((version[0] >= 2019 && version[0] < 2021) || (version[0] == 2021 && version[1] < 2) || HasGlobalLocalKeywordIndices(reader.serializedType)) //2019 ~2021.1
             {
-                var m_GlobalKeywordIndices = reader.ReadUInt16Array();
+                m_GlobalKeywordIndices = reader.ReadUInt16Array();
                 reader.AlignStream();
-                var m_LocalKeywordIndices = reader.ReadUInt16Array();
+                m_LocalKeywordIndices = reader.ReadUInt16Array();
                 reader.AlignStream();
             }
             else
