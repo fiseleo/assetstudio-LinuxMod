@@ -366,6 +366,85 @@ namespace AssetStudio
         }
     }
 
+    /// <summary>WGSL -> SPIR-V compiler (naga, through the C interface of linux/naga-c): the WebGPU programs of Unity.</summary>
+    public static class Naga
+    {
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int CompileFn(IntPtr source, uint stage, IntPtr entry, out IntPtr words, out nuint count, out IntPtr error);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void FreeFn(IntPtr words, nuint count, IntPtr error);
+
+        public const uint StageVertex = 0, StageFragment = 1;
+
+        private static readonly object initLock = new object();
+        private static bool initialized;
+        private static CompileFn compile;
+        private static FreeFn free;
+
+        public static bool IsAvailable
+        {
+            get
+            {
+                Initialize();
+                return compile != null;
+            }
+        }
+
+        private static void Initialize()
+        {
+            lock (initLock)
+            {
+                if (initialized)
+                    return;
+                initialized = true;
+                foreach (var candidate in Vkd3dShader.Candidates("naga_c", "0"))
+                {
+                    if (!NativeLibrary.TryLoad(candidate, out var handle))
+                        continue;
+                    if (NativeLibrary.TryGetExport(handle, "naga_wgsl_to_spirv", out var pCompile) && NativeLibrary.TryGetExport(handle, "naga_free", out var pFree))
+                    {
+                        compile = Marshal.GetDelegateForFunctionPointer<CompileFn>(pCompile);
+                        free = Marshal.GetDelegateForFunctionPointer<FreeFn>(pFree);
+                        Logger.Verbose($"Loaded naga from {candidate}");
+                        return;
+                    }
+                    NativeLibrary.Free(handle);
+                }
+            }
+        }
+
+        /// <summary>The SPIR-V of an entry point of a WGSL module (the names kept); errors are thrown with naga's message.</summary>
+        public static byte[] ToSpirv(string wgsl, uint stage, string entryPoint = "main")
+        {
+            Initialize();
+            if (compile == null)
+                throw new DllNotFoundException("naga library not found");
+            var source = Marshal.StringToCoTaskMemUTF8(wgsl);
+            var entry = Marshal.StringToCoTaskMemUTF8(entryPoint);
+            try
+            {
+                var result = compile(source, stage, entry, out var words, out var count, out var error);
+                try
+                {
+                    if (result != 0)
+                        throw new Exception($"{(stage == StageVertex ? "vertex" : "fragment")} program: {Marshal.PtrToStringUTF8(error)}");
+                    var spirv = new byte[(int)count * 4];
+                    Marshal.Copy(words, spirv, 0, spirv.Length);
+                    return spirv;
+                }
+                finally
+                {
+                    free(words, count, error);
+                }
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(source);
+                Marshal.FreeCoTaskMem(entry);
+            }
+        }
+    }
+
     /// <summary>SPIR-V -> Vulkan GLSL decompiler (SPIRV-Cross C API).</summary>
     public static class SpirvCross
     {

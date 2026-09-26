@@ -6,6 +6,79 @@ using Vec4 = System.Numerics.Vector4;
 
 namespace AssetStudio.Tests
 {
+    public class WgslProgramTests
+    {
+        //WGSL as Tint writes Unity's programs: HLSLcc's names, "x" before the names starting with "_"
+        private const string Vertex = @"
+alias Arr = array<vec4f, 4u>;
+struct VGlobals {
+  hlslcc_mtx4x4unity_MatrixVP : Arr,
+  x_MainTex_ST : vec4f,
+}
+@group(1) @binding(1) var<uniform> x_22 : VGlobals;
+struct main_out {
+  @builtin(position) gl_Position : vec4f,
+  @location(0) vs_TEXCOORD0_1 : vec2f,
+}
+@vertex
+fn main(@location(0) in_POSITION0_param : vec4f, @location(1) in_TEXCOORD0_param : vec2f) -> main_out {
+  let p = x_22.hlslcc_mtx4x4unity_MatrixVP[3i] + x_22.hlslcc_mtx4x4unity_MatrixVP[0i] * in_POSITION0_param.x;
+  return main_out(p, in_TEXCOORD0_param * x_22.x_MainTex_ST.xy + x_22.x_MainTex_ST.zw);
+}
+";
+        private const string Fragment = @"
+@group(0) @binding(1) var x_MainTex : texture_2d<f32>;
+@group(0) @binding(0) var sampler_MainTex : sampler;
+@fragment
+fn main(@location(0) vs_TEXCOORD0_param : vec2f) -> @location(0) vec4f {
+  return textureSample(x_MainTex, sampler_MainTex, vs_TEXCOORD0_param);
+}
+";
+
+        [Fact]
+        public void Stages_OfBothProgramLayouts()
+        {
+            //6000.0: one text with #ifdef parts
+            var text = Encoding.UTF8.GetBytes($"#ifdef VERTEX\n{Vertex}#endif\n#ifdef FRAGMENT\n{Fragment}#endif\n");
+            var (vertex, fragment) = UnityWgsl.Stages(text);
+            Assert.Contains("@vertex", vertex);
+            Assert.Contains("@fragment", fragment);
+            //6000.3 and up: (offset, length) per stage and a flags word
+            var v = Encoding.UTF8.GetBytes(Vertex);
+            var f = Encoding.UTF8.GetBytes(Fragment);
+            var header = 20;
+            var code = new byte[header + v.Length + f.Length];
+            BitConverter.GetBytes(header).CopyTo(code, 0);
+            BitConverter.GetBytes(v.Length).CopyTo(code, 4);
+            BitConverter.GetBytes(header + v.Length).CopyTo(code, 8);
+            BitConverter.GetBytes(f.Length).CopyTo(code, 12);
+            v.CopyTo(code, header);
+            f.CopyTo(code, header + v.Length);
+            (vertex, fragment) = UnityWgsl.Stages(code);
+            Assert.Equal(Vertex, vertex);
+            Assert.Equal(Fragment, fragment);
+            Assert.Equal("_MainTex_ST", UnityWgsl.UnityName("x_MainTex_ST"));
+            Assert.Equal("unity_MatrixVP", UnityWgsl.UnityName("unity_MatrixVP"));
+        }
+
+        [SkippableFact]
+        public void Compiled_TheModulesKeepTheNamesAndBindings()
+        {
+            Skip.IfNot(Naga.IsAvailable, "naga not available");
+            var vs = SpirvReflection.Read(Naga.ToSpirv(Vertex, Naga.StageVertex));
+            var fs = SpirvReflection.Read(Naga.ToSpirv(Fragment, Naga.StageFragment));
+            Assert.Equal(new[] { "in_POSITION0_param", "in_TEXCOORD0_param" }, vs.InputNames.OrderBy(x => x.Key).Select(x => x.Value).ToArray());
+            //the block naga wraps the struct in is flattened
+            var buffer = vs.Resources.Single(x => x.Kind == SpirvReflection.ResourceKind.UniformBuffer);
+            Assert.Equal((1u, 1u), (buffer.Set, buffer.Binding));
+            Assert.True(buffer.Fields.Single(x => x.Name == "unity_MatrixVP").IsMatrix);
+            Assert.Equal(64, buffer.Fields.Single(x => x.Name == "x_MainTex_ST").Offset);
+            Assert.Contains(fs.Resources, x => x.Kind == SpirvReflection.ResourceKind.Image && x.Name == "x_MainTex" && x.Binding == 1);
+            Assert.Contains(fs.Resources, x => x.Kind == SpirvReflection.ResourceKind.Sampler && x.Name == "sampler_MainTex" && x.Binding == 0);
+            Assert.Throws<Exception>(() => Naga.ToSpirv("fn main( {", Naga.StageVertex));
+        }
+    }
+
     public class GlslProgramTests
     {
         //a program as Unity's GLES3 programs are: both stages, uniform blocks and loose uniforms, HLSLcc's matrices

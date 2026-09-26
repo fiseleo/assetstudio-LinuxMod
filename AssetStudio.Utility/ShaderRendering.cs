@@ -48,6 +48,8 @@ namespace AssetStudio
         public List<(int Channel, int Location)> Inputs = new List<(int, int)>();
         /// <summary>OpenGL (ES): the GLSL of the stage (see <see cref="UnityGlsl"/>), compiled by glslang.</summary>
         public string Glsl;
+        /// <summary>WebGPU: the WGSL of the stage, compiled by naga.</summary>
+        public string Wgsl;
         public List<UnityConstantBuffer> ConstantBuffers = new List<UnityConstantBuffer>();
         public List<UnityShaderTexture> Textures = new List<UnityShaderTexture>();
     }
@@ -82,6 +84,9 @@ namespace AssetStudio
         public bool IsVulkan => Platform == ShaderCompilerPlatform.Vulkan;
         /// <summary>OpenGL ES 3 / OpenGL programs: GLSL compiled by glslang, the parameters found by name in the modules.</summary>
         public bool IsGlsl => Platform == ShaderCompilerPlatform.GLES3Plus || Platform == ShaderCompilerPlatform.OpenGLCore;
+        public bool IsWebGpu => Platform == ShaderCompilerPlatform.WebGPU;
+        /// <summary>The parameters are found by their names in the modules (OpenGL, WebGPU), not by their registers.</summary>
+        public bool NamesParameters => IsGlsl || IsWebGpu;
 
         /// <summary>The set and binding a Vulkan parameter register names.</summary>
         public static (uint set, uint binding) VulkanSlot(int register) => ((uint)(register >> 16) & 0xFF, (uint)register & 0xFFFF);
@@ -120,18 +125,21 @@ namespace AssetStudio
                 reason = "the shader has no compiled programs (Unity 5.5 and up)";
                 return null;
             }
-            //Direct3D 11 (translated) first, then the Vulkan programs as they are, then OpenGL (ES) compiled by glslang
-            var platformId = new[] { ShaderCompilerPlatform.D3D11, ShaderCompilerPlatform.Vulkan, ShaderCompilerPlatform.GLES3Plus, ShaderCompilerPlatform.OpenGLCore }
+            //Direct3D 11 (translated) first, then the Vulkan programs as they are, then OpenGL (ES) compiled by glslang, then
+            //WebGPU compiled by naga
+            var platformId = new[] { ShaderCompilerPlatform.D3D11, ShaderCompilerPlatform.Vulkan, ShaderCompilerPlatform.GLES3Plus, ShaderCompilerPlatform.OpenGLCore, ShaderCompilerPlatform.WebGPU }
                 .Where(x => x != ShaderCompilerPlatform.GLES3Plus && x != ShaderCompilerPlatform.OpenGLCore || Glslang.IsAvailable)
+                .Where(x => x != ShaderCompilerPlatform.WebGPU || Naga.IsAvailable)
                 .FirstOrDefault(x => shader.platforms.Contains(x), ShaderCompilerPlatform.None);
             var platform = Array.IndexOf(shader.platforms, platformId);
             if (platform < 0)
             {
-                reason = $"the shader has no Direct3D 11, Vulkan or OpenGL (ES) 3 programs (platforms: {string.Join(", ", shader.platforms)})";
+                reason = $"the shader has no Direct3D 11, Vulkan, OpenGL (ES) 3 or WebGPU programs (platforms: {string.Join(", ", shader.platforms)})";
                 return null;
             }
             var vulkan = platformId == ShaderCompilerPlatform.Vulkan;
             var glsl = platformId == ShaderCompilerPlatform.GLES3Plus || platformId == ShaderCompilerPlatform.OpenGLCore;
+            var webgpu = platformId == ShaderCompilerPlatform.WebGPU;
             string decodeError = null;
             var keywords = new HashSet<string>(materialKeywords ?? Array.Empty<string>(), StringComparer.Ordinal);
             ShaderProgram programs = null;
@@ -167,7 +175,7 @@ namespace AssetStudio
                     List<Candidate> Candidates(SerializedProgram program)
                     {
                         var list = new List<Candidate>();
-                        bool IsDx11(ShaderGpuProgramType type) => vulkan ? type == ShaderGpuProgramType.SPIRV
+                        bool IsDx11(ShaderGpuProgramType type) => webgpu ? type == ShaderGpuProgramType.WGSL : vulkan ? type == ShaderGpuProgramType.SPIRV
                             : glsl ? type >= ShaderGpuProgramType.GLES31AEP && type <= ShaderGpuProgramType.GLES3 || type >= ShaderGpuProgramType.GLCore32 && type <= ShaderGpuProgramType.GLCore43
                             : type >= ShaderGpuProgramType.DX11VertexSM40 && type <= ShaderGpuProgramType.DX11DomainSM50;
                         foreach (var sub in program?.m_SubPrograms ?? new List<SerializedSubProgram>())
@@ -202,7 +210,7 @@ namespace AssetStudio
                             .First();
                     }
                     //Vulkan and OpenGL programs hold every stage: the vertex program's when the fragment has none of its own
-                    var fragmentSub = Best(pass.progFragment, null) ?? (vulkan || glsl ? Best(pass.progVertex, null) : null);
+                    var fragmentSub = Best(pass.progFragment, null) ?? (vulkan || glsl || webgpu ? Best(pass.progVertex, null) : null);
                     if (fragmentSub == null)
                         continue;
                     var fragmentKeywords = fragmentSub.Keywords;
@@ -239,6 +247,16 @@ namespace AssetStudio
                             List<(uint source, uint target)> channels = blob.BindChannels.Count > 0 ? blob.BindChannels
                                 : sub.Serialized?.m_Channels?.m_Channels.Select(x => ((uint)x.source, (uint)x.target)).ToList() ?? new List<(uint, uint)>();
                             stage.Inputs.AddRange(channels.Where(x => x.target >= 13).Select(x => ((int)x.source, (int)x.target - 13)));
+                        }
+                        else if (webgpu)
+                        {
+                            //the stage's WGSL, from the vertex program when the fragment one has none
+                            var source = stageIndex == 0 ? UnityWgsl.Stages(code).Vertex : UnityWgsl.Stages(code).Fragment;
+                            if (source == null && stageIndex == 1 && vertexSub.BlobIndex < programs.m_SubPrograms.Length && programs.m_SubPrograms[vertexSub.BlobIndex] != null)
+                                source = UnityWgsl.Stages(programs.m_SubPrograms[vertexSub.BlobIndex].m_ProgramCode).Fragment;
+                            if (source == null)
+                                return null;
+                            stage = new UnityShaderStage { ProgramType = sub.Type, Wgsl = source };
                         }
                         else if (glsl)
                         {
@@ -330,7 +348,8 @@ namespace AssetStudio
                     };
                 }
             }
-            reason ??= decodeError ?? (vulkan ? "no forward pass with Vulkan programs" : glsl ? "no forward pass with OpenGL (ES) programs" : "no forward pass with Direct3D 11 vertex and fragment programs");
+            reason ??= decodeError ?? (vulkan ? "no forward pass with Vulkan programs" : glsl ? "no forward pass with OpenGL (ES) programs"
+                : webgpu ? "no forward pass with WebGPU programs" : "no forward pass with Direct3D 11 vertex and fragment programs");
             return null;
         }
 
@@ -510,6 +529,8 @@ namespace AssetStudio
         public List<int> InputLocations { get; } = new List<int>();
         /// <summary>The names of the inputs by location (GLSL: in_POSITION0, in_TEXCOORD1...).</summary>
         public Dictionary<int, string> InputNames { get; } = new Dictionary<int, string>();
+        /// <summary>The module reads storage buffers (structured buffers, e.g. VFX Graph's particles): not for the preview.</summary>
+        public bool UsesStorageBuffers { get; private set; }
 
         public static SpirvReflection Read(byte[] spirv)
         {
@@ -584,6 +605,45 @@ namespace AssetStudio
                 }
             }
 
+            //the members of a block, the members of nested structs flattened (naga wraps a uniform struct in a block of one member)
+            void AddFields(uint structType, int baseOffset, List<UnityShaderField> fields)
+            {
+                if (!types.TryGetValue(structType, out var st) || st.op != 30)
+                    return;
+                for (uint m = 0; m < st.operands.Length; m++)
+                {
+                    if (!memberOffsets.TryGetValue((structType, m), out var memberOffset))
+                        continue;
+                    var offset = baseOffset + (int)memberOffset;
+                    var memberType = st.operands[m];
+                    if (types.TryGetValue(memberType, out var nested) && nested.op == 30)
+                    {
+                        AddFields(memberType, offset, fields);
+                        continue;
+                    }
+                    if (!memberNames.TryGetValue((structType, m), out var memberName))
+                        continue;
+                    //the element type and count of arrays, the components of vectors
+                    var arraySize = 0;
+                    if (types.TryGetValue(memberType, out var t) && t.op == 28)
+                    {
+                        arraySize = (int)constants.GetValueOrDefault(t.operands[1]);
+                        memberType = t.operands[0];
+                    }
+                    var components = types.TryGetValue(memberType, out var element) && element.op == 23 ? (int)element.operands[1] : 1;
+                    var field = new UnityShaderField { Name = memberName, Offset = offset, ArraySize = arraySize, Components = components };
+                    if (memberName.StartsWith("hlslcc_mtx4x4", StringComparison.Ordinal))
+                    {
+                        //4 columns per matrix
+                        field.Name = memberName.Substring("hlslcc_mtx4x4".Length);
+                        field.IsMatrix = true;
+                        field.Components = 4;
+                        field.ArraySize = arraySize > 4 ? arraySize / 4 : 0;
+                    }
+                    fields.Add(field);
+                }
+            }
+
             var reflection = new SpirvReflection();
             foreach (var (pointerType, id, storage) in variables)
             {
@@ -598,6 +658,11 @@ namespace AssetStudio
                         if (names.TryGetValue(id, out var inputName))
                             reflection.InputNames[(int)location] = inputName;
                     }
+                    continue;
+                }
+                if (storage == 12 || storage == 2 && decorations.ContainsKey((type, 3u))) //StorageBuffer, Uniform with BufferBlock
+                {
+                    reflection.UsesStorageBuffers = true;
                     continue;
                 }
                 if (storage != 0 && storage != 2) //UniformConstant, Uniform
@@ -616,30 +681,7 @@ namespace AssetStudio
                     case 30: //struct: a uniform buffer
                         resource.Kind = ResourceKind.UniformBuffer;
                         resource.Size = SizeOf(type);
-                        for (uint m = 0; m < resourceType.operands.Length; m++)
-                        {
-                            if (!memberNames.TryGetValue((type, m), out var memberName) || !memberOffsets.TryGetValue((type, m), out var offset))
-                                continue;
-                            //the element type and count of arrays, the components of vectors
-                            var memberType = resourceType.operands[m];
-                            var arraySize = 0;
-                            if (types.TryGetValue(memberType, out var t) && t.op == 28)
-                            {
-                                arraySize = (int)constants.GetValueOrDefault(t.operands[1]);
-                                memberType = t.operands[0];
-                            }
-                            var components = types.TryGetValue(memberType, out var element) && element.op == 23 ? (int)element.operands[1] : 1;
-                            var field = new UnityShaderField { Name = memberName, Offset = (int)offset, ArraySize = arraySize, Components = components };
-                            if (memberName.StartsWith("hlslcc_mtx4x4", StringComparison.Ordinal))
-                            {
-                                //4 columns per matrix
-                                field.Name = memberName.Substring("hlslcc_mtx4x4".Length);
-                                field.IsMatrix = true;
-                                field.Components = 4;
-                                field.ArraySize = arraySize > 4 ? arraySize / 4 : 0;
-                            }
-                            resource.Fields.Add(field);
-                        }
+                        AddFields(type, 0, resource.Fields);
                         break;
                     case 25: //image
                         resource.Kind = ResourceKind.Image;
@@ -714,29 +756,31 @@ namespace AssetStudio
     /// </summary>
     public static class UnityGlsl
     {
-        /// <summary>The source of a stage ("VERTEX" or "FRAGMENT"), null when the program has none or is GLSL ES 1.0.</summary>
-        public static string Stage(string program, string stage)
+        /// <summary>The lines of the #ifdef &lt;stage&gt; ... #endif part of a program, null when it has none.</summary>
+        public static List<string> Section(string program, string stage)
         {
             var lines = program.Replace("\r\n", "\n").Split('\n');
             var start = Array.FindIndex(lines, x => x.Trim() == "#ifdef " + stage);
             if (start < 0)
                 return null;
             var depth = 0;
-            var end = -1;
             for (int i = start; i < lines.Length; i++)
             {
                 var line = lines[i].TrimStart();
                 if (line.StartsWith("#if", StringComparison.Ordinal))
                     depth++;
                 else if (line.StartsWith("#endif", StringComparison.Ordinal) && --depth == 0)
-                {
-                    end = i;
-                    break;
-                }
+                    return lines.Skip(start + 1).Take(i - start - 1).ToList();
             }
-            if (end < 0)
+            return null;
+        }
+
+        /// <summary>The source of a stage ("VERTEX" or "FRAGMENT"), null when the program has none or is GLSL ES 1.0.</summary>
+        public static string Stage(string program, string stage)
+        {
+            var body = Section(program, stage);
+            if (body == null)
                 return null;
-            var body = lines.Skip(start + 1).Take(end - start - 1).ToList();
             var version = body.FindIndex(x => x.TrimStart().StartsWith("#version", StringComparison.Ordinal));
             if (version < 0)
                 return null;
@@ -755,6 +799,36 @@ namespace AssetStudio
             ordered.AddRange(body.Where((_, i) => i != version));
             return string.Join("\n", ordered) + "\n";
         }
+    }
+
+    /// <summary>
+    /// The WGSL of Unity's WebGPU programs: a header of (offset, length) per stage (vertex, fragment) and a flags word,
+    /// then the sources (6000.3 and up); or the #ifdef VERTEX / FRAGMENT parts of one text (6000.0).
+    /// </summary>
+    public static class UnityWgsl
+    {
+        public static (string Vertex, string Fragment) Stages(byte[] code)
+        {
+            var headerSize = code.Length >= 4 ? BitConverter.ToInt32(code, 0) : 0;
+            if (headerSize >= 12 && headerSize <= code.Length && (headerSize - 4) % 8 == 0)
+            {
+                string Part(int i)
+                {
+                    if (i * 8 + 8 > headerSize - 4)
+                        return null;
+                    var offset = BitConverter.ToInt32(code, i * 8);
+                    var length = BitConverter.ToInt32(code, i * 8 + 4);
+                    return length > 0 && offset >= headerSize && offset + length <= code.Length ? Encoding.UTF8.GetString(code, offset, length).TrimEnd('\0') : null;
+                }
+                return (Part(0), Part(1));
+            }
+            var text = Encoding.UTF8.GetString(code);
+            string Joined(List<string> lines) => lines == null ? null : string.Join("\n", lines) + "\n";
+            return (Joined(UnityGlsl.Section(text, "VERTEX")), Joined(UnityGlsl.Section(text, "FRAGMENT")));
+        }
+
+        /// <summary>Unity's name of a WGSL identifier: Tint writes the names starting with "_" with an "x" before.</summary>
+        public static string UnityName(string name) => name != null && name.StartsWith("x_", StringComparison.Ordinal) ? name.Substring(1) : name;
     }
 
     /// <summary>
@@ -818,6 +892,15 @@ namespace AssetStudio
         /// </summary>
         public static bool? FromPrograms(UnityShaderVariant variant)
         {
+            if (variant?.Fragment?.Wgsl is { } wgsl && !IsScriptablePipeline(variant))
+            {
+                //Tint prints the constants in full: 0.22091630101203918457f, 0.95999997854232788086f
+                if (wgsl.Contains("0.2209163", StringComparison.Ordinal))
+                    return false;
+                if (wgsl.Contains("0.9599999", StringComparison.Ordinal))
+                    return true;
+                return null;
+            }
             if (variant?.Fragment?.Glsl is { } glsl && !IsScriptablePipeline(variant))
             {
                 //the constants as HLSLcc prints them
