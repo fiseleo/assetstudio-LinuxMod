@@ -792,6 +792,7 @@ namespace AssetStudio
                 case ShaderCompilerPlatform.GameCoreXboxOne:
                 case ShaderCompilerPlatform.GameCoreScarlett:
                 case ShaderCompilerPlatform.PS5:
+                case ShaderCompilerPlatform.Switch2:
                     return programType == ShaderGpuProgramType.ConsoleVS
                         || programType == ShaderGpuProgramType.ConsoleFS
                         || programType == ShaderGpuProgramType.ConsoleHS
@@ -832,11 +833,13 @@ namespace AssetStudio
                         || programType == ShaderGpuProgramType.GLCore43;
                 case ShaderCompilerPlatform.Vulkan:
                     return programType == ShaderGpuProgramType.SPIRV;
+                case ShaderCompilerPlatform.WebGPU:
+                    return programType == ShaderGpuProgramType.WGSL;
                 case ShaderCompilerPlatform.D3D12:
                     // the D3D12 program types come after the known ones; the program is a DXBC container
-                    return programType > ShaderGpuProgramType.PS5NGGC;
+                    return programType > ShaderGpuProgramType.WGSL;
                 default:
-                    // WebGPU, Switch2 and platforms added later are skipped
+                    // platforms added later are skipped
                     return false;
             }
         }
@@ -1168,6 +1171,9 @@ namespace AssetStudio
                             sb.Append($"// disassembly error {e.Message}\n");
                         }
                         break;
+                    case ShaderGpuProgramType.WGSL:
+                        AppendWgsl(sb, m_ProgramCode);
+                        break;
                     case ShaderGpuProgramType.ConsoleVS:
                     case ShaderGpuProgramType.ConsoleFS:
                     case ShaderGpuProgramType.ConsoleHS:
@@ -1194,6 +1200,34 @@ namespace AssetStudio
             sb.Append('"');
             return sb.ToString();
         }
+        /// <summary>
+        /// WebGPU program: a header of (offset, length) pairs, one per stage (vertex, fragment), and a flags word,
+        /// followed by the WGSL source of each stage.
+        /// </summary>
+        private void AppendWgsl(StringBuilder sb, byte[] code)
+        {
+            sb.Append($"// hash: {ComputeHash64(code):x8}\n");
+            var headerSize = code.Length >= 4 ? BitConverter.ToInt32(code, 0) : 0;
+            var stageCount = (headerSize - 4) / 8;
+            if (headerSize < 12 || headerSize > code.Length || (headerSize - 4) % 8 != 0)
+            {
+                sb.Append(Encoding.UTF8.GetString(code));
+                return;
+            }
+            sb.Append($"// flags: {BitConverter.ToUInt32(code, headerSize - 4)}\n");
+            string[] stageNames = { "vertex", "fragment" };
+            for (int i = 0; i < stageCount; i++)
+            {
+                var offset = BitConverter.ToInt32(code, i * 8);
+                var length = BitConverter.ToInt32(code, i * 8 + 4);
+                if (length <= 0 || offset < headerSize || offset + length > code.Length)
+                    continue;
+                sb.Append($"// ---- {(i < stageNames.Length ? stageNames[i] : $"stage {i}")} (WGSL) ----\n");
+                sb.Append(Encoding.UTF8.GetString(code, offset, length).TrimEnd('\0'));
+                sb.Append('\n');
+            }
+        }
+
         private static bool IsDxbcAt(byte[] code, int offset) =>
             offset >= 0 && offset + 4 <= code.Length && code[offset] == 'D' && code[offset + 1] == 'X' && code[offset + 2] == 'B' && code[offset + 3] == 'C';
 

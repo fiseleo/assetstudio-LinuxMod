@@ -529,7 +529,8 @@ namespace AssetStudio
         ConsoleDS = 29,
         ConsoleGS = 30,
         RayTracing = 31,
-        PS5NGGC = 32
+        PS5NGGC = 32,
+        WGSL = 33, //WebGPU: the WGSL of the vertex and the fragment stage in one program (6000.0+)
     };
 
     public class SerializedProgramParameters
