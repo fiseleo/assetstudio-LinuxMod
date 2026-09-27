@@ -30,6 +30,9 @@ namespace AssetStudio
         public string DefaultVersion; // Fallback version for stripped files
         private string detectedFolderVersion; // Version detected from globalgamemanagers or bundles
         public CancellationTokenSource tokenSource = new CancellationTokenSource();
+        /// <summary>The last load stopped because the memory ran out; what it had loaded is cleared.</summary>
+        public bool LowMemoryAbort => lowMemoryAbort != 0;
+        private int lowMemoryAbort;
         public List<SerializedFile> assetsFileList = new List<SerializedFile>();
 
         // Thread-safe collections for parallel file loading
@@ -248,6 +251,7 @@ namespace AssetStudio
 
         private void Load(string[] files)
         {
+            lowMemoryAbort = 0;
             files = LoadExtractedTypeTrees(files);
             files = LoadCatalogs(files);
             foreach (var file in files)
@@ -291,6 +295,8 @@ namespace AssetStudio
                 {
                     Parallel.For(processedCount, currentBatchEnd, options, i =>
                     {
+                        if (CheckMemory())
+                            return;
                         string fileToLoad;
                         lock (importFilesLock)
                         {
@@ -324,6 +330,29 @@ namespace AssetStudio
                 ProcessAssets();
                 LoadCatalogTextAssets();
             }
+
+            if (LowMemoryAbort)
+            {
+                Clear();
+            }
+        }
+
+        /// <summary>
+        /// Stops the load (cancels it) when the system is about to run out of memory,
+        /// instead of the kernel killing the program.
+        /// </summary>
+        public bool CheckMemory()
+        {
+            if (LowMemoryAbort)
+                return true;
+            if (!MemoryBudget.IsCritical())
+                return false;
+            if (Interlocked.Exchange(ref lowMemoryAbort, 1) != 0)
+                return true;
+            Logger.Error($"Out of memory: only {MemoryBudget.Format(MemoryBudget.Available)} of {MemoryBudget.Format(MemoryBudget.Total)} left, loading stopped and cleared. " +
+                "Load fewer files at once, or build a CABMap + AssetMap of the folder and load what you need from the Asset Browser.");
+            tokenSource.Cancel();
+            return true;
         }
 
         /// <summary>
@@ -1086,8 +1115,11 @@ namespace AssetStudio
             tokenSource.Dispose();
             tokenSource = new CancellationTokenSource();
 
+            SpillStorage.Reset();
+
             GC.WaitForPendingFinalizers();
-            GC.Collect();
+            //aggressive: also gives the freed memory back to the system, a plain collect keeps it
+            GC.Collect(2, GCCollectionMode.Aggressive, true, true);
         }
 
         private void ReadAssets()
@@ -1101,6 +1133,8 @@ namespace AssetStudio
             {
                 foreach (var objectInfo in assetsFile.m_Objects)
                 {
+                    if ((i & 255) == 0)
+                        CheckMemory();
                     if (tokenSource.IsCancellationRequested)
                     {
                         Logger.Info("Reading assets has been cancelled !!");
@@ -1171,10 +1205,13 @@ namespace AssetStudio
         {
             Logger.Info("Process Assets...");
 
+            var count = 0;
             foreach (var assetsFile in assetsFileList)
             {
                 foreach (var obj in assetsFile.Objects)
                 {
+                    if ((++count & 255) == 0)
+                        CheckMemory();
                     if (tokenSource.IsCancellationRequested)
                     {
                         Logger.Info("Processing assets has been cancelled !!");

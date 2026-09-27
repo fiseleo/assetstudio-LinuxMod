@@ -1229,7 +1229,8 @@ namespace AssetStudio
                 }
                 else
                 {
-                    throw new NotSupportedException("Failed getting triangles. Submesh topology is lines or points.");
+                    //lines or points have no triangles: the sub mesh stays with no faces, the rest of the mesh still loads
+                    m_SubMesh.indexCount = 0;
                 }
             }
         }

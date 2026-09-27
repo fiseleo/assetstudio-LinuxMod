@@ -254,7 +254,13 @@ namespace AssetStudio
             Stream blocksStream;
             var uncompressedSizeSum = m_BlocksInfo.Sum(x => x.uncompressedSize);
             Logger.Verbose($"Total size of decompressed blocks: {uncompressedSizeSum}");
-            if (uncompressedSizeSum >= int.MaxValue)
+            //on disk when the RAM runs short; then the files in it are pieces of it, with no copy
+            var spillStream = SpillStorage.TryCreate(uncompressedSizeSum, uncompressedSizeSum >= int.MaxValue);
+            if (spillStream != null)
+            {
+                blocksStream = spillStream;
+            }
+            else if (uncompressedSizeSum >= int.MaxValue)
             {
                 /*var memoryMappedFile = MemoryMappedFile.CreateNew(null, uncompressedSizeSum);
                 assetsDataStream = memoryMappedFile.CreateViewStream();*/
@@ -311,6 +317,11 @@ namespace AssetStudio
                 fileList.Add(file);
                 file.path = node.path;
                 file.fileName = Path.GetFileName(node.path);
+                if (blocksStream is SpillStream spillStream)
+                {
+                    file.stream = spillStream.Slice(node.offset, node.size);
+                    continue;
+                }
                 if (node.size >= int.MaxValue)
                 {
                     /*var memoryMappedFile = MemoryMappedFile.CreateNew(null, entryinfo_size);

@@ -246,6 +246,8 @@ namespace AssetStudio.Avalonia
             {
                 foreach (var asset in assetsFile.Objects)
                 {
+                    if ((i & 1023) == 0)
+                        assetsManager.CheckMemory();
                     if (assetsManager.tokenSource.IsCancellationRequested)
                     {
                         Logger.Info("Building asset list has been cancelled !!");

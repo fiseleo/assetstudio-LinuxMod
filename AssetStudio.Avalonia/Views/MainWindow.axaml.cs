@@ -480,6 +480,11 @@ namespace AssetStudio.Avalonia.Views
 
         private async Task BuildAssetStructures()
         {
+            if (assetsManager.LowMemoryAbort)
+            {
+                StatusStripUpdate(LowMemoryMessage);
+                return;
+            }
             if (assetsManager.assetsFileList.Count == 0)
             {
                 StatusStripUpdate("No Unity file can be loaded.");
@@ -487,6 +492,12 @@ namespace AssetStudio.Avalonia.Views
             }
 
             (var productName, var treeNodeCollection) = await Task.Run(BuildAssetData);
+            if (assetsManager.LowMemoryAbort)
+            {
+                ResetForm();
+                StatusStripUpdate(LowMemoryMessage);
+                return;
+            }
             var typeMap = await Task.Run(BuildClassStructure);
 
             if (string.IsNullOrEmpty(productName))
@@ -551,6 +562,8 @@ namespace AssetStudio.Avalonia.Views
                 filterTypeMenu.Items.Add(typeItem);
             }
         }
+
+        private const string LowMemoryMessage = "Out of memory: loading stopped. Load fewer files, or use a CABMap and the Asset Browser (see the log).";
 
         public void ResetForm()
         {
